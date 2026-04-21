@@ -1,0 +1,40 @@
+services:
+  buc_factory:
+    build: .
+    image: ai-agent:v0.1.0
+    container_name: ai-agent
+    # ports:
+    #   - "8000:8000"
+    volumes:
+      - .:/app
+      - /app/.venv
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    command: uv run python -m src.__main__
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.11.1
+    container_name: mlflow
+    env_file: .env
+    ports:
+      - "5001:5000"
+    command: >
+      mlflow server 
+        --host 0.0.0.0 
+        --port 5000
+        --backend-store-uri ${MLFLOW_DB_URI}
+        --default-artifact-root ${MLFLOW_RUNS}
+        --allowed-hosts 'mlflow:5000,127.0.0.1:5000,127.0.0.1:5001'
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000').read()" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+# docker compose up --build # build and start the containers
+# docker compose down --rmi all # remove all containers and images
+# df -h / # disk space usage
+# docker system prune -a # remove all unused images, containers, networks, and volumes
+
