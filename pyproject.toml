@@ -5,9 +5,15 @@ description = "An AI agent for business use cases generation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=0.97.0",
     "dotenv>=0.9.9",
+    "langchain>=1.2.15",
+    "langchain-anthropic>=1.4.1",
     "mlflow>=3.11.1",
 ]
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [dependency-groups]
 dev = [
