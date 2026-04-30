@@ -1,0 +1,46 @@
+# Original use case: French P&C insurance, fully specified.
+# Dimensions and entities are pinned, so randomization is deterministic
+# across runs (only the "roll" varies).
+
+industry: "P&C insurance"
+company_context: "A mid-sized Paris-based property & casualty insurer serving French retail customers across home, auto, and affinity products. ~500 employees, distributing through tied agents and direct online channels."
+location: "Paris, France"
+language: "French"
+role: "Data Analyst"
+seniority: "Mid-Senior"
+tool: "Power BI Desktop"
+duration_minutes: 75
+deliverable_format: "PBIP"
+
+dimensions:
+  branche:
+    - "MRH (Multirisque Habitation)"
+    - "Auto particuliers"
+    - "Mixte MRH + Auto"
+    - "Garanties affinitaires (mobile, vélo, voyage)"
+  angle:
+    - "Pilotage de la sinistralité (S/P, fréquence, coût moyen)"
+    - "Performance commerciale (acquisition, churn, transformation)"
+    - "Rentabilité par segment (combined ratio)"
+    - "Détection d'anomalies / qualité de portefeuille"
+    - "Pilotage de la gestion des sinistres (délais, cadences)"
+  historique_mois: ["24", "30", "36", "48"]
+  volumetrie: ["50k_polices", "120k_polices", "250k_polices"]
+  twist:
+    - "Tempête / événement climatique majeur"
+    - "Inflation pièces auto / hausse coût carrosserie"
+    - "Lancement nouvelle formule il y a 9-12 mois"
+    - "Migration récente du SI de gestion"
+    - "Campagne résiliation à échéance (loi Hamon / Châtel)"
+  restitution:
+    - "Rapport COMEX (1-2 pages)"
+    - "Tableau de bord opérationnel indemnisation"
+    - "Dashboard direction technique / actuariat"
+    - "Vue souscription direction commerciale régionale"
+
+entities:
+  - "polices"
+  - "sinistres"
+  - "clients"
+  - "produits"
+  - "geographie"

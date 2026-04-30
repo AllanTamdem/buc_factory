@@ -33,7 +33,7 @@ class AnthropicLLM(BaseChatModel):
     def __init__(
         self,
         api_key: str,
-        model: str = "claude-sonnet-4-6",
+        model: str = "claude-opus-4-7",
         **kwargs: Any,
     ):
         """
@@ -45,7 +45,7 @@ class AnthropicLLM(BaseChatModel):
 
             model (str):
                 Claude model name.
-                Default: "claude-sonnet-4-6" (best for most business use cases)
+                Default: "claude-opus-4-7" (best for most business use cases and deeper tool use).
 
             kwargs:
                 Additional generation parameters:
@@ -286,8 +286,7 @@ class AnthropicLLM(BaseChatModel):
                         ],
                     }
                 )
-                print(f"Executed tool '{tool_name}' with args {tool_args}, "
-                      f"result: {tool_result}")
+                print(f"Executed tool '{tool_name}' with args {tool_args}, result: {tool_result}")
 
         LOGGER.warning("Max tool-calling loops reached, returning last response.")
         return self._create_chat_result(

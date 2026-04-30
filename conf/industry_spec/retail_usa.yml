@@ -1,0 +1,14 @@
+# US fashion retail, minimal config.
+# dimensions and entities are omitted -> Claude infers them at runtime
+# during the bootstrap_domain sub-task. Each run can produce different
+# dimensions, which adds variety but reduces determinism.
+
+industry: "fashion retail (omnichannel)"
+company_context: "A mid-sized US-based apparel retailer with 80 brick-and-mortar stores and a growing e-commerce channel. Sells women's and men's mid-tier fashion with fast seasonal cycles."
+location: "New York, NY"
+language: "English"
+role: "BI Analyst"
+seniority: "Mid-Senior"
+tool: "Power BI Desktop"
+duration_minutes: 90
+deliverable_format: "PBIP"
