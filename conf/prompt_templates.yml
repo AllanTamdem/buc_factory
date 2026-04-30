@@ -1,0 +1,233 @@
+system: |
+  You are a senior data/BI consultant building a recruitment
+  assessment for a {seniority} {role} candidate.
+
+  Domain context:
+    - Industry: {industry}
+    - Location: {location}
+    - Company context: {company_context}
+    - Tool: {tool}
+    - Deliverable format: {deliverable_format}
+    - Time budget for the candidate: {duration_minutes} minutes
+
+  Output language for all candidate-facing and recruiter-facing content:
+  {language}.
+  Code, file names, technical identifiers, and tool-specific keywords stay in
+  their native technical form (typically English).
+
+  You work step by step using tools. Always call mark_subtask_complete when
+  the current sub-task is done. Use industry-appropriate terminology for
+  {industry}; if unsure of a term, prefer a simpler one over inventing.
+
+  STRICT RULE: Never write intermediate helper scripts (e.g. to count words,
+  verify output, or inspect files). Use read_file or validate_json to inspect
+  existing files. Trust your own output — do not write a script to check it.
+
+  STRICT RULE: Never call list_files before write_file. The write_file tool
+  creates parent directories automatically — calling list_files on a directory
+  that does not yet exist returns an error and does not block the write.
+  Always call write_file first; only call list_files afterward if you need to
+  verify what was written.
+
+tasks:
+  bootstrap_domain:
+    fully_specified: |
+      Sub-task 1/8: Bootstrap (config is fully specified).
+
+      Write "bootstrap.json" containing the dimensions and entities from config:
+        dimensions = {dimensions_json}
+        entities = {entities_json}
+
+      Then call mark_subtask_complete.
+
+    infer_preamble: |
+      Sub-task 1/8: Bootstrap the domain.
+
+      For the {industry} industry in {location}, infer:
+
+    infer_dims_section: |
+      1. SCENARIO DIMENSIONS — 4 to 6 dimensions that, when crossed,
+         produce realistic and varied analytical scenarios. Each dimension
+         needs 3-5 plausible values. Examples of dimension types:
+         business focus area, analytical angle, history depth, data volume,
+         contextual twist (a recent industry-specific event), restitution
+         audience. Make them genuinely industry-specific: "loss ratio
+         analysis" only applies to insurance, "shrinkage" only to retail,
+         "MRR cohorts" only to SaaS.
+
+    infer_entities_section: |
+      2. CORE ENTITIES — 4 to 6 CSV files that would realistically be
+         handed to a candidate. The first one should be the main fact table
+         of the industry. Use industry-native names (e.g. "policies" or
+         "polices" for insurance, "orders" for retail, "tickets" for
+         support, "subscriptions" for SaaS).
+
+         STRICT RULE: No extensions in the entity names. The files will be named <entity>.csv
+         and the entities will be referred to by their base name without extension. Do not include ".csv" in the entity names.
+
+    infer_postamble: |
+      Write "bootstrap.json":
+      {{
+        "dimensions": {{ "<dim_name>": ["value1", "value2", ...], ... }},
+        "entities": ["<main_fact>", "<dim1>", "<dim2>", ...],
+        "rationale": "<2-3 sentences on why these choices fit {industry}>"
+      }}
+
+      {use_dims_note}
+      {use_entities_note}
+      Then call mark_subtask_complete.
+
+  roll_scenario: |
+    Sub-task 2/8: Roll the scenario.
+
+    Read bootstrap.json. Pick ONE value at random for each dimension.
+    Write "scenario.json" with one key per dimension, value = the chosen string.
+
+    Then call mark_subtask_complete.
+
+  write_brief: |
+    Sub-task 3/8: Write the candidate brief.
+
+    Read scenario.json and bootstrap.json. Write the brief in {language}
+    to "brief/candidate_brief.md", 600-900 words, covering:
+      1. Business context (anchored in: {company_context})
+      2. Mission: 3-5 KPIs (named, formula in natural language not code),
+         2-4 required visualizations, 1 modeling requirement, 1 data quality
+         requirement, 1 open analytical question
+      3. Inputs: description of every CSV file (columns, types, semantics)
+      4. Expected deliverable in {tool}
+      5. Evaluation criteria (weighted, total = 100 pts)
+      6. Practical constraints (time = {duration_minutes} min, no GenAI)
+
+    Anchor every section in the rolled scenario, not generic content.
+
+    Then call mark_subtask_complete.
+
+  design_data_schema: |
+    Sub-task 4/8: Design the data schema.
+
+    Read bootstrap.json for the entity list. Write "brief/data_schema.json":
+    {{
+      "files": [
+        {{"filename": "<entity>.csv", "columns": [
+          {{"name": "...", "type": "...", "example": "...",
+            "semantics": "...", "is_pk": false, "fk_to": null}}, ...
+        ]}}, ...
+      ],
+      "traps": [{{"file": "...", "column": "...", "trap": "...",
+                  "why_realistic": "..."}}]
+    }}
+
+    Include 2-3 deliberate, industry-realistic traps a {seniority}
+    {role} should detect (wrong types, locale-specific date formats,
+    unit mismatches, duplicates, etc.).
+
+    Then call mark_subtask_complete.
+
+  generate_data_script: |
+    Sub-task 5/8: Generate the data script.
+
+    Write "starter/generate_data.py". Requirements:
+      - random.seed(42) and numpy seed for reproducibility
+      - Read NOTHING from disk; emit CSVs into ./data/ relative to itself
+      - 300-800 rows per file matching brief/data_schema.json
+      - Guarantee referential integrity (every FK resolves)
+      - Faithfully inject every documented trap
+
+    Run with run_python("starter/generate_data.py"), then verify FK integrity
+    with validate_csv_integrity for the main fact-to-dimension relationship.
+    Only call mark_subtask_complete after validation passes.
+
+  generate_starter:
+    power_bi: |
+      Sub-task 6/8: Generate the Power BI starter (PBIP).
+
+      Build under "starter/":
+        - Assessment.pbip
+        - Assessment.SemanticModel/.platform  (type "SemanticModel", version "2.0")
+        - Assessment.SemanticModel/definition.pbism
+        - Assessment.SemanticModel/definition/model.tmdl, database.tmdl
+        - Assessment.SemanticModel/definition/tables/<Entity>.tmdl  (one per entity,
+          types declared, NO relationships, NO measures)
+        - Assessment.Report/.platform  (type "Report", version "2.0")
+        - Assessment.Report/definition.pbir
+        - Assessment.Report/report.json (one empty page)
+        - Assessment.Report/StaticResources/SharedResources/BaseThemes/theme.json
+
+      NOTE: The .platform files are required by Power BI Desktop to identify
+      artifact types. Without them the project will not open.
+      Each .platform file must be valid JSON with schema, metadata.type,
+      metadata.displayName, config.version, and config.logicalId (any UUID).
+
+      Tables connect to ../data/*.csv via Csv.Document with relative paths.
+
+      Validate every JSON file with validate_json before finishing.
+      Then call mark_subtask_complete.
+
+    tableau: |
+      Sub-task 6/8: Generate the Tableau starter.
+
+      Build under "starter/":
+        - Assessment.tds (XML data source pointing to ../data/*.csv)
+        - Assessment.twb (XML workbook with one empty worksheet and dashboard)
+        - README.md with packaging instructions
+
+      Then call mark_subtask_complete.
+
+    looker: |
+      Sub-task 6/8: Generate the LookML starter.
+
+      Build under "starter/":
+        - models/assessment.model.lkml (one explore, connection placeholder)
+        - views/<entity>.view.lkml for each entity (fields with types, no measures)
+        - manifest.lkml
+        - README.md
+
+      Then call mark_subtask_complete.
+
+    generic: |
+      Sub-task 6/8: Generate the starter for {tool}.
+
+      Build a minimal openable project under "starter/" appropriate for
+      {tool} ({deliverable_format}). Include source-data wiring to
+      ../data/*.csv, schema/type declarations for each entity, and an empty
+      report/dashboard surface.
+
+      Document the structure in starter/README.md.
+      Then call mark_subtask_complete.
+
+  write_recruiter_solution: |
+    Sub-task 7/8: Write the recruiter solution.
+
+    Write "solution/recruiter_solution.md" in {language}, covering:
+      1. Target data model (star schema, cardinalities, justifications)
+      2. Reference {dax_or_calc} code for all key measures with
+         comments and common pitfalls
+      3. Data prep steps ({prep_layer})
+      4. Page-by-page visualization plan
+      5. Model answer to the open analytical question (2-4 paragraphs)
+      6. Detailed scoring rubric with observable tiers (Excellent/Good/Fair/Poor)
+      7. 5 red flags + 5 strong signals
+      8. 5 debrief interview questions
+
+    Reference scenario.json and data_schema.json so it matches the specific
+    roll. Then call mark_subtask_complete.
+
+  final_assembly: |
+    Sub-task 8/8: Final assembly check.
+
+    Use list_files to verify the project is complete. Expected layout:
+      bootstrap.json, scenario.json
+      brief/candidate_brief.md, brief/data_schema.json
+      solution/recruiter_solution.md
+      starter/generate_data.py, starter/data/*.csv
+      starter/<tool-specific files for {tool}>
+
+    Fill any gaps. Then call mark_subtask_complete.
+
+retry_suffix: |
+  --- RETRY FEEDBACK ---
+  {retry_feedback}
+  --- END ---
+
+  Fix and try again.
