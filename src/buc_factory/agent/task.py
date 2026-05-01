@@ -1,5 +1,6 @@
 import json
 import logging
+import random
 import time
 from pathlib import Path
 
@@ -9,7 +10,6 @@ from .prompting import dax_or_calc, task_prompt
 LOGGER = logging.getLogger(__name__)
 
 MAX_RETRIES_PER_TASK = 3
-MODEL = "claude-opus-4-7"  # best for most business use cases and deeper tool use
 
 # ──────────────────────────────────────────────────────────────────
 # Validators
@@ -151,7 +151,7 @@ def validate_subtask(
 _TASKS_WITH_RUN_PYTHON = {"generate_data_script"}
 
 
-def run_subtask(client, name, cfg, state, output_dir, tool_schemas, dispatch, system) -> bool:
+def run_subtask(llm, name, cfg, state, output_dir, tool_schemas, dispatch, system) -> bool:
     task = state.task(name)
     task.status = "running"
     state.save()
@@ -164,48 +164,30 @@ def run_subtask(client, name, cfg, state, output_dir, tool_schemas, dispatch, sy
         else [t for t in tool_schemas if t["name"] != "run_python"]
     )
 
+    # Pre-roll scenario in Python so each run gets genuine randomness regardless
+    # of model temperature (claude-opus-4-7 accepts no temperature parameter).
+    rolled: dict | None = None
+    if name == "roll_scenario":
+        dims = state.bootstrapped_dimensions or cfg.dimensions or {}
+        rolled = {dim: random.choice(vals) for dim, vals in dims.items()}
+        LOGGER.info(f"  rolled scenario: {rolled}")
+
     for attempt in range(1, MAX_RETRIES_PER_TASK + 1):
         task.attempts = attempt
         LOGGER.info(f"\n━━━ [{name}] attempt {attempt}/{MAX_RETRIES_PER_TASK} ━━━")
 
-        messages = [{"role": "user", "content": task_prompt(name, cfg, retry_feedback)}]
+        prompt = task_prompt(name, cfg, retry_feedback, rolled=rolled)
+        messages = [{"role": "user", "content": prompt}]
+        # write_recruiter_solution produces a large markdown file in one write_file call
+        _max_tokens = 16000 if name == "write_recruiter_solution" else 8000
 
-        for _ in range(40):
-            # write_recruiter_solution produces a large markdown file in one write_file call
-            _max_tokens = 16000 if name == "write_recruiter_solution" else 8000
-            response = client.messages.create(
-                model=MODEL,
-                max_tokens=_max_tokens,
-                system=system,
-                tools=active_tools,
-                messages=messages,
-            )
-            messages.append({"role": "assistant", "content": response.content})
-
-            if response.stop_reason == "end_turn":
-                break
-            if response.stop_reason != "tool_use":
-                break
-
-            tool_results = []
-            done_signal = False
-            for block in response.content:
-                if block.type != "tool_use":
-                    continue
-                fn = dispatch.get(block.name)
-                try:
-                    result = fn(**block.input) if fn else f"ERROR: unknown tool {block.name}"
-                except Exception as e:
-                    result = f"ERROR: {type(e).__name__}: {e}"
-                LOGGER.info(f"  → {block.name} → {str(result)[:120]}")
-                tool_results.append(
-                    {"type": "tool_result", "tool_use_id": block.id, "content": str(result)}
-                )
-                if block.name == "mark_subtask_complete":
-                    done_signal = True
-            messages.append({"role": "user", "content": tool_results})
-            if done_signal:
-                break
+        llm.run_agent_loop(
+            messages=messages,
+            system=system,
+            tools=active_tools,
+            dispatch=dispatch,
+            max_tokens=_max_tokens,
+        )
 
         ok, msg = validate_subtask(name, cfg, output_dir, state)
         LOGGER.info(f"  validation: {'✓' if ok else '✗'} {msg}")

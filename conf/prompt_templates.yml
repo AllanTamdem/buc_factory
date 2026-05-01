@@ -80,8 +80,11 @@ tasks:
   roll_scenario: |
     Sub-task 2/8: Roll the scenario.
 
-    Read bootstrap.json. Pick ONE value at random for each dimension.
-    Write "scenario.json" with one key per dimension, value = the chosen string.
+    The following values were randomly drawn for this run:
+    {rolled_json}
+
+    Write "scenario.json" as a flat JSON object containing exactly these
+    key-value pairs — no additions, no omissions.
 
     Then call mark_subtask_complete.
 

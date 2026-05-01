@@ -89,12 +89,19 @@ def _starter_prompt(cfg: DomainConfig) -> str:
     return fmt(p["generic"], tool=cfg.tool, deliverable_format=cfg.deliverable_format)
 
 
-def task_prompt(name: str, cfg: DomainConfig, retry_feedback: str | None) -> str:
+def task_prompt(
+    name: str, cfg: DomainConfig, retry_feedback: str | None, rolled: dict | None = None
+) -> str:
     p = _PROMPTS["tasks"]
     ctx = vars(cfg)
     prompts = {
         "bootstrap_domain": _bootstrap_prompt(cfg),
-        "roll_scenario": p["roll_scenario"],
+        "roll_scenario": fmt(
+            p["roll_scenario"],
+            rolled_json=json.dumps(rolled, ensure_ascii=False, indent=2),
+        )
+        if rolled
+        else p["roll_scenario"],
         "write_brief": fmt(p["write_brief"], **ctx),
         "design_data_schema": fmt(p["design_data_schema"], **ctx),
         "generate_data_script": p["generate_data_script"],

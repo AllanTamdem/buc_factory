@@ -11,7 +11,6 @@ Usage:
     python agent.py --config configs/insurance_fr.yaml --output-dir ./run_001  # resumes
 """
 
-
 import argparse
 import logging
 import os
@@ -20,13 +19,13 @@ import time
 from pathlib import Path
 
 import mlflow
-from anthropic import Anthropic
 from dotenv import load_dotenv
 
 from .agent.entity import AgentState, DomainConfig
 from .agent.prompting import build_system
 from .agent.task import run_subtask
 from .agent.tool import make_tools
+from .llm.claudeai import AnthropicLLM
 
 # Configure logging to display info messages in a readable format with timestamps and log levels
 logging.basicConfig(
@@ -43,8 +42,8 @@ def setup_mlflow():
 
 
 def main():
-    
-    load_dotenv() # Load environment variables from .env file
+
+    load_dotenv()  # Load environment variables from .env file
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
@@ -52,8 +51,7 @@ def main():
 
     cfg = DomainConfig.from_yaml(args.config)
     state = AgentState.load_or_init(args.output_dir, args.config)
-    client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    print(client)
+    llm = AnthropicLLM(api_key=os.getenv("ANTHROPIC_API_KEY"))
     tool_schemas, dispatch = make_tools(args.output_dir)
     system = build_system(cfg)
 
@@ -70,7 +68,7 @@ def main():
             LOGGER.error(f"\n✗ {nxt.name} failed after {nxt.attempts} attempts: {nxt.last_error}")
             sys.exit(1)
         if not run_subtask(
-            client, nxt.name, cfg, state, args.output_dir, tool_schemas, dispatch, system
+            llm, nxt.name, cfg, state, args.output_dir, tool_schemas, dispatch, system
         ):
             sys.exit(1)
 

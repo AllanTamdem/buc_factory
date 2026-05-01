@@ -1,332 +1,334 @@
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable
 from typing import Any
 
 from anthropic import Anthropic
-from langchain_core.language_models import BaseChatModel, LanguageModelInput
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.messages.ai import UsageMetadata
-from langchain_core.outputs import ChatGeneration, ChatResult
-from langchain_core.runnables import Runnable
-from langchain_core.tools import BaseTool
 
 LOGGER = logging.getLogger(__name__)
 
 
-class AnthropicLLM(BaseChatModel):
+class AnthropicLLM:
     """
-    A LangChain-compatible wrapper for Anthropic Claude chat models.
+    Thin wrapper around the Anthropic Messages API.
 
-    This class provides a ChatModel abstraction similar to AzureOpenAILLM,
-    adapted to Anthropic's Messages API. It supports:
+    Provides two surfaces:
+    - ``generate()``       — single-turn completion with no tool loop.
+    - ``run_agent_loop()`` — multi-step agentic loop with plain-callable tool dispatch.
 
-    - Standard chat completions (system / user / assistant messages)
-    - Tool calling via Claude's `tool_use` / `tool_result` protocol
-    - Iterative tool execution with loop protection
-    - Usage token accounting
-    - LangChain Runnable and Agent compatibility
+    Example::
 
-    The wrapper intentionally mirrors the structure and behavior of the
-    AzureOpenAILLM implementation to minimize migration effort.
+        llm = AnthropicLLM(api_key="sk-ant-...")
+
+        # single completion
+        response = llm.generate(
+            messages=[{"role": "user", "content": "What is 2 + 2?"}],
+            system="You are a maths tutor.",
+        )
+        print(response.content[0].text)  # "4"
+
+        # agentic loop
+        def add(a: int, b: int) -> str:
+            return str(a + b)
+
+        tools = [{
+            "name": "add",
+            "description": "Add two integers.",
+            "input_schema": {
+                "type": "object",
+                "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}},
+                "required": ["a", "b"],
+            },
+        }]
+        messages = [{"role": "user", "content": "What is 3 + 5?"}]
+        llm.run_agent_loop(messages, system="You are a maths tutor.", tools=tools,
+                           dispatch={"add": add})
     """
 
     def __init__(
         self,
         api_key: str,
         model: str = "claude-opus-4-7",
+        max_tokens: int = 8000,
+    ):
+        """
+        Initialise the wrapper.
+
+        Args:
+            api_key:
+                Anthropic API key. Must be a non-empty string starting with
+                ``sk-ant-``. Passed directly to ``anthropic.Anthropic``.
+
+                Example::
+
+                    AnthropicLLM(api_key="sk-ant-api03-...")
+                    # or from the environment:
+                    AnthropicLLM(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+            model:
+                Claude model ID to use for every request made by this
+                instance. Defaults to ``"claude-opus-4-7"``, the most capable
+                generally available model.
+
+                Note: ``claude-opus-4-7`` does not accept ``temperature``,
+                ``top_p``, or ``top_k`` — pass those via ``generate(**kwargs)``
+                only when targeting an older model.
+
+                Example::
+
+                    AnthropicLLM(api_key=key, model="claude-sonnet-4-6")
+
+            max_tokens:
+                Default per-response token cap used when ``generate()`` or
+                ``run_agent_loop()`` are called without an explicit
+                ``max_tokens`` override. Must be a positive integer.
+
+                Anthropic requires this field on every request; the wrapper
+                always sends it. Defaults to ``8000``.
+
+                Example::
+
+                    AnthropicLLM(api_key=key, max_tokens=16000)
+
+        Raises:
+            ValueError: If ``api_key`` is falsy (empty string or ``None``).
+        """
+        if not api_key:
+            raise ValueError("Anthropic api_key must be provided")
+        self._model = model
+        self._max_tokens = max_tokens
+        self._client = Anthropic(api_key=api_key)
+
+    def generate(
+        self,
+        messages: list[dict],
+        system: str = "You are a helpful assistant.",
+        max_tokens: int | None = None,
         **kwargs: Any,
     ):
         """
-        Initialize the Anthropic Claude LLM wrapper.
+        Single API call with no tool loop.
+
+        Sends one ``messages.create`` request and returns the raw Anthropic
+        ``Message`` response object. Use this for straightforward completions
+        where no tool execution is needed.
 
         Args:
-            api_key (str):
-                Anthropic API key (required). Must start with `sk-ant-`.
+            messages:
+                Conversation turns in Anthropic wire format — a list of
+                ``{"role": ..., "content": ...}`` dicts. Roles must
+                alternate ``"user"`` / ``"assistant"``; the first turn must
+                be ``"user"``.
 
-            model (str):
-                Claude model name.
-                Default: "claude-opus-4-7" (best for most business use cases and deeper tool use).
+                Example::
 
-            kwargs:
-                Additional generation parameters:
+                    messages = [
+                        {"role": "user", "content": "Summarise this article: ..."},
+                    ]
 
-                temperature (float):
-                    Controls randomness in output.
-                    Range: 0–1
-                    Default: 0.1
+                    # multi-turn
+                    messages = [
+                        {"role": "user",      "content": "My name is Alice."},
+                        {"role": "assistant", "content": "Hello Alice!"},
+                        {"role": "user",      "content": "What is my name?"},
+                    ]
 
-                max_tokens (int):
-                    Maximum tokens to generate per response.
-                    **Required by Anthropic**.
-                    Default: 4096
+            system:
+                System prompt passed separately from the conversation history,
+                as required by the Anthropic API. Defaults to a generic
+                helpful-assistant instruction.
 
-                stop (list[str] | None):
-                    Stop sequences that will halt generation when encountered.
+                Example::
 
-                tools (list[dict] | None):
-                    List of tool definitions for Claude to use. Each tool should be a dict with:
-                    - `type`: "tool_search_tool_bm25" | "tool_search_tool_regex" | ...
+                    system = "You are a senior Python engineer. Reply only in code."
 
-                Any other keyword arguments are accepted for compatibility
-                with LangChain's BaseChatModel interface.
+            max_tokens:
+                Override the instance-level ``max_tokens`` for this call only.
+                When ``None`` the instance default is used.
 
-        Raises:
-            ValueError:
-                If `api_key` is not provided.
-        """
-        super().__init__(**kwargs)
+                Example::
 
-        if not api_key:
-            raise ValueError("Anthropic api_key must be provided")
+                    # short classification — tight cap
+                    llm.generate(messages, max_tokens=64)
 
-        self._model = model
-        self._temperature = kwargs.get("temperature", 0.1)
-        self._max_tokens = kwargs.get("max_tokens", 4096)
-        self._stop = kwargs.get("stop")
-        self._tools = kwargs.get("tools")  # Predifined Claude tools
-        self._client = Anthropic(api_key=api_key)
+                    # long report — generous cap
+                    llm.generate(messages, max_tokens=16000)
 
-    # ------------------------------------------------------------------
-    # LangChain required properties
-    # ------------------------------------------------------------------
+            **kwargs:
+                Any additional keyword argument accepted by
+                ``anthropic.Anthropic().messages.create()``, forwarded
+                verbatim. Useful for one-off overrides such as
+                ``thinking``, ``tools``, or ``stop_sequences``.
 
-    @property
-    def _llm_type(self) -> str:
-        """Return the type identifier for this LLM."""
-        return "AnthropicChatModel"
+                Note: do not pass ``temperature`` / ``top_p`` when targeting
+                ``claude-opus-4-7`` — those parameters return a 400 error on
+                that model.
 
-    @property
-    def _default_params(self) -> Mapping[str, Any]:
-        """Default generation parameters passed to the Anthropic API."""
-        return {
-            "model": self._model,
-            "temperature": self._temperature,
-            "max_tokens": self._max_tokens,
-            "stop_sequences": self._stop,
-        }
+                Example::
 
-    @property
-    def _identifying_params(self) -> Mapping[str, Any]:
-        """Parameters that uniquely identify this LLM instance."""
-        return {
-            "model": self._model,
-        }
-
-    # ------------------------------------------------------------------
-    # Request formatting
-    # ------------------------------------------------------------------
-
-    def _format_request(self, prompt, **kwargs):
-        """
-        Format LangChain inputs into Anthropic Messages API format.
-
-        Anthropic requires:
-        - `system` message passed separately
-        - `messages` as a list of role/content dicts
-
-        Args:
-            prompt:
-                Either a raw string or a list of LangChain BaseMessage objects
+                    llm.generate(messages, thinking={"type": "adaptive"})
+                    llm.generate(messages, stop_sequences=["STOP"])
 
         Returns:
-            tuple[str, list[dict]]:
-                system_message, formatted_messages
+            ``anthropic.types.Message`` — the raw API response. Text content
+            is in ``response.content[0].text``; token usage is in
+            ``response.usage``.
         """
-        system_message = kwargs.get("system_message", "You are a helpful assistant.")
-
-        messages = []
-
-        if isinstance(prompt, list):
-            for msg in prompt:
-                if isinstance(msg, BaseMessage):
-                    role = "assistant" if msg.type == "ai" else "user"
-                    messages.append(
-                        {
-                            "role": role,
-                            "content": msg.content,
-                        }
-                    )
-        else:
-            messages.append(
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            )
-
-        return system_message, messages
-
-    # ------------------------------------------------------------------
-    # Response → LangChain conversion
-    # ------------------------------------------------------------------
-
-    def _create_chat_result(
-        self,
-        response,
-        generation_info: dict | None = None,
-    ) -> ChatResult:
-        """
-        Convert an Anthropic API response into a LangChain ChatResult.
-
-        Handles:
-        - Text blocks
-        - Tool-use blocks
-        - Token usage metadata
-        """
-        text_output = ""
-        tool_uses = []
-
-        for block in response.content:
-            if block.type == "text":
-                text_output += block.text
-            elif block.type == "tool_use":
-                tool_uses.append(block)
-
-        message = AIMessage(content=text_output)
-
-        if response.usage:
-            message.usage_metadata = UsageMetadata(
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
-                total_tokens=response.usage.input_tokens + response.usage.output_tokens,
-            )
-
-        generation = ChatGeneration(
-            message=message,
-            generation_info=generation_info or {},
+        return self._client.messages.create(
+            model=self._model,
+            system=system,
+            messages=messages,
+            max_tokens=max_tokens or self._max_tokens,
+            **kwargs,
         )
 
-        return ChatResult(generations=[generation])
-
-    # ------------------------------------------------------------------
-    # Core generation loop with tool execution
-    # ------------------------------------------------------------------
-
-    def _generate(self, prompt, **kwargs):
+    def run_agent_loop(
+        self,
+        messages: list[dict],
+        system: str,
+        tools: list[dict],
+        dispatch: dict[str, Callable],
+        max_tokens: int | None = None,
+        max_steps: int = 40,
+        done_tool: str = "mark_subtask_complete",
+    ) -> list[dict]:
         """
-        Generate a response from the Anthropic model.
+        Agentic loop: call Claude, execute tools via dispatch, repeat
+        until ``end_turn``, no tool calls, or ``done_tool`` fires.
 
-        Supports iterative tool calling. If the model emits one or more
-        `tool_use` blocks, those tools are executed and the results are
-        fed back into the conversation via `tool_result` messages.
+        Each iteration appends the assistant turn and the tool-result
+        user turn to ``messages`` in place, so the full conversation
+        history accumulates there. The loop ends when:
+
+        - Claude returns ``stop_reason == "end_turn"`` (no more tool calls).
+        - Claude returns any ``stop_reason`` other than ``"tool_use"``.
+        - The tool named ``done_tool`` is called (explicit completion signal).
+        - ``max_steps`` iterations are exhausted.
 
         Args:
-            prompt:
-                Input prompt or list of messages.
+            messages:
+                Mutable conversation list in Anthropic wire format. Must
+                contain at least one ``"user"`` turn. The list is extended
+                in place with every assistant response and tool-result round
+                trip; callers can inspect the full history after the call.
 
-            max_loops (int):
-                Maximum number of tool-call iterations before aborting.
-                Default: 5
+                Example::
+
+                    messages = [
+                        {"role": "user", "content": "Write bootstrap.json with 5 dimensions."}
+                    ]
+                    llm.run_agent_loop(messages, system=system, tools=tools, dispatch=dispatch)
+                    # messages now contains the full conversation
+
+            system:
+                System prompt passed to every ``messages.create`` call in the
+                loop. Should describe the agent's role and constraints.
+
+                Example::
+
+                    system = "You are a BI assessment generator. Use the provided tools only."
+
+            tools:
+                List of Anthropic tool-schema dicts. Each dict must have at
+                minimum ``"name"``, ``"description"``, and ``"input_schema"``
+                keys. Only tools present here can be invoked by the model.
+
+                Example::
+
+                    tools = [{
+                        "name": "write_file",
+                        "description": "Write text to a file.",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {
+                                "path":    {"type": "string"},
+                                "content": {"type": "string"},
+                            },
+                            "required": ["path", "content"],
+                        },
+                    }]
+
+            dispatch:
+                Mapping from tool name to a plain Python callable. When
+                the model requests a tool call, the matching callable is
+                invoked as ``fn(**block.input)``. If a tool name is missing
+                from the mapping the result is an error string fed back to
+                the model.
+
+                Example::
+
+                    dispatch = {
+                        "write_file": lambda path, content: Path(path).write_text(content),
+                        "read_file":  lambda path: Path(path).read_text(),
+                    }
+
+            max_tokens:
+                Per-call token cap. Overrides the instance default for every
+                request inside the loop. Useful when a specific subtask is
+                known to produce unusually long output.
+
+                Example::
+
+                    # subtask writes a large markdown report
+                    llm.run_agent_loop(messages, ..., max_tokens=16000)
+
+            max_steps:
+                Hard upper bound on the number of ``messages.create`` calls.
+                Prevents infinite loops if the model never signals completion.
+                Defaults to ``40``.
+
+                Example::
+
+                    llm.run_agent_loop(messages, ..., max_steps=10)
+
+            done_tool:
+                Name of the tool the model should call to signal that the
+                subtask is complete. When this tool is invoked the loop exits
+                immediately after processing all tool calls in that turn.
+                Defaults to ``"mark_subtask_complete"``.
+
+                Example::
+
+                    llm.run_agent_loop(messages, ..., done_tool="finish")
 
         Returns:
-            ChatResult
+            The ``messages`` list (same object passed in), now containing the
+            full conversation including all assistant and tool-result turns.
         """
-        system, messages = self._format_request(prompt, **kwargs)
+        _max_tokens = max_tokens or self._max_tokens
 
-        tools = (
-            kwargs.get("tools") or self._tools
-        )  # Allow tools to be passed per-call or use predefined ones
-        tools_registry = kwargs.get("tools_registry", {})
-        max_loops = kwargs.get("max_loops", 5)
-
-        for _ in range(max_loops):
+        for _ in range(max_steps):
             response = self._client.messages.create(
                 model=self._model,
+                max_tokens=_max_tokens,
                 system=system,
-                messages=messages,
-                temperature=kwargs.get("temperature", self._temperature),
-                max_tokens=kwargs.get("max_tokens", self._max_tokens),
-                stop_sequences=kwargs.get("stop", self._stop),
                 tools=tools,
+                messages=messages,
             )
+            messages.append({"role": "assistant", "content": response.content})
 
-            tool_calls = [block for block in response.content if block.type == "tool_use"]
+            if response.stop_reason == "end_turn":
+                break
+            if response.stop_reason != "tool_use":
+                break
 
-            # No tool calls → final answer
-            if not tool_calls:
-                return self._create_chat_result(
-                    response=response,
-                    generation_info=self._default_params,
+            tool_results = []
+            done_signal = False
+            for block in response.content:
+                if block.type != "tool_use":
+                    continue
+                fn = dispatch.get(block.name)
+                try:
+                    result = fn(**block.input) if fn else f"ERROR: unknown tool {block.name}"
+                except Exception as e:
+                    result = f"ERROR: {type(e).__name__}: {e}"
+                LOGGER.info(f"  → {block.name} → {str(result)[:120]}")
+                tool_results.append(
+                    {"type": "tool_result", "tool_use_id": block.id, "content": str(result)}
                 )
+                if block.name == done_tool:
+                    done_signal = True
+            messages.append({"role": "user", "content": tool_results})
+            if done_signal:
+                break
 
-            # Add assistant message containing tool calls
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": response.content,
-                }
-            )
-            print(
-                f"Model requested {len(tool_calls)} "
-                f"tool call(s): {[call.name for call in tool_calls]}"
-            )
-            # Execute each tool
-            for tool_call in tool_calls:
-                tool_name = tool_call.name
-                tool_args = tool_call.input
-                impl = tools_registry.get(tool_name)
-
-                if impl is None:
-                    tool_result = f"ERROR: tool '{tool_name}' not found."
-                else:
-                    try:
-                        tool_result = impl.invoke(tool_args)
-                    except Exception as e:
-                        tool_result = f"ERROR executing tool '{tool_name}': {e}"
-
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": tool_call.id,
-                                "content": tool_result,
-                            }
-                        ],
-                    }
-                )
-                print(f"Executed tool '{tool_name}' with args {tool_args}, result: {tool_result}")
-
-        LOGGER.warning("Max tool-calling loops reached, returning last response.")
-        return self._create_chat_result(
-            response=response,
-            generation_info=self._default_params,
-        )
-
-    # ------------------------------------------------------------------
-    # Tool binding
-    # ------------------------------------------------------------------
-
-    def bind_tools(
-        self,
-        tools: Sequence[dict | type | Callable | BaseTool],
-        **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, BaseMessage]:
-        """
-        Bind tool definitions to this chat model.
-
-        Tool schemas are converted using OpenAI-compatible definitions,
-        which are fully supported by Claude.
-
-        Args:
-            tools:
-                List of tool definitions or BaseTool instances.
-
-        Returns:
-            Runnable suitable for LangChain agents and chains.
-        """
-        tools_registry = {tool.name: tool for tool in tools if isinstance(tool, BaseTool)}
-        anthropic_tools = [
-            {
-                "type": "custom",
-                "name": tool.name,
-                "description": tool.description,
-                "input_schema": tool.args_schema.model_json_schema(),
-            }
-            for tool in tools
-            if isinstance(tool, BaseTool)
-        ]
-        kwargs["tools_registry"] = tools_registry
-
-        return super().bind(tools=anthropic_tools, **kwargs)
+        return messages
