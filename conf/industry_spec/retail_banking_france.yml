@@ -1,0 +1,48 @@
+# Retail banking, France — fully specified.
+# Dimensions and entities are pinned for deterministic scenario rolling.
+
+industry: "banque de détail"
+company_context: "Une banque de réseau française de taille intermédiaire, implantée sur l'ensemble du territoire national avec un réseau d'environ 600 agences et une offre digitale en croissance. Clientèle composée de particuliers et de professionnels. Gamme de produits couvrant les comptes courants, l'épargne, le crédit immobilier, le crédit à la consommation et les produits de prévoyance / assurance."
+location: "Paris, France"
+language: "French"
+role: "Data Analyst"
+seniority: "Mid-Senior"
+tool: "Power BI Desktop"
+duration_minutes: 90
+deliverable_format: "PBIP"
+
+dimensions:
+  domaine:
+    - "Crédit immobilier (origination & encours)"
+    - "Crédit à la consommation (revolving & amortissable)"
+    - "Épargne (livrets, assurance-vie, dépôts à terme)"
+    - "Comptes courants & moyens de paiement"
+    - "Prévoyance & assurances affinitaires"
+  angle:
+    - "Performance commerciale (conquête, équipement, attrition)"
+    - "Qualité du portefeuille de crédit (taux d'impayés, NPL)"
+    - "Rentabilité client (PNB, coût du risque, ROE par segment)"
+    - "Comportement digital vs. agence (canal, self-care)"
+    - "Pilotage des objectifs réseau (atteinte budget, scoring agences)"
+  historique_mois: ["12", "18", "24", "36"]
+  volumetrie: ["80k_clients", "300k_clients", "750k_clients"]
+  twist:
+    - "Remontée des taux : renégociations massives et pression sur la marge nette d'intérêt"
+    - "Hausse du taux d'usure : impact sur la production de crédits immobiliers"
+    - "Lancement d'une offre 100% mobile il y a 6 mois"
+    - "Fusion avec un réseau régional : consolidation des référentiels clients"
+    - "Campagne de rétention suite à une vague de résiliations PEL / livrets"
+    - "Détection de fraude sur les virements instantanés"
+  restitution:
+    - "Tableau de bord Comité de Direction (synthèse mensuelle)"
+    - "Reporting réseau agences (directeurs de région)"
+    - "Dashboard risque crédit (direction des risques)"
+    - "Vue équipement & cross-sell (direction marketing)"
+
+entities:
+  - "clients"
+  - "comptes"
+  - "contrats_credit"
+  - "transactions"
+  - "agences"
+  - "produits"

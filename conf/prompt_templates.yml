@@ -80,8 +80,11 @@ tasks:
   roll_scenario: |
     Sub-task 2/8: Roll the scenario.
 
-    Read bootstrap.json. Pick ONE value at random for each dimension.
-    Write "scenario.json" with one key per dimension, value = the chosen string.
+    The following values were randomly drawn for this run:
+    {rolled_json}
+
+    Write "scenario.json" as a flat JSON object containing exactly these
+    key-value pairs — no additions, no omissions.
 
     Then call mark_subtask_complete.
 
@@ -127,15 +130,27 @@ tasks:
   generate_data_script: |
     Sub-task 5/8: Generate the data script.
 
-    Write "starter/generate_data.py". Requirements:
-      - random.seed(42) and numpy seed for reproducibility
-      - Read NOTHING from disk; emit CSVs into ./data/ relative to itself
-      - 300-800 rows per file matching brief/data_schema.json
-      - Guarantee referential integrity (every FK resolves)
-      - Faithfully inject every documented trap
+    Step 1 — read brief/data_schema.json and brief/candidate_brief.md to understand
+    the schema, traps, and scenario context.
 
-    Run with run_python("starter/generate_data.py"), then verify FK integrity
-    with validate_csv_integrity for the main fact-to-dimension relationship.
+    Step 2 — write ONE file only: "starter/generate_data.py". No probe or test scripts.
+    Script requirements:
+      - First two lines after imports: random.seed(42) and np.random.seed(42)
+      - Anchor output path with:
+            HERE = os.path.dirname(os.path.abspath(__file__))
+            OUT_DIR = os.path.join(HERE, "data")
+            os.makedirs(OUT_DIR, exist_ok=True)
+        This guarantees CSVs land in starter/data/ regardless of working directory.
+      - Generate all entity CSVs (from the schema) into OUT_DIR — 300-800 rows each
+      - Never read from disk at runtime; all data is generated programmatically
+      - Guarantee referential integrity (every FK value resolves to a PK)
+      - Faithfully inject every trap documented in the schema
+
+    Step 3 — run with run_python("starter/generate_data.py") and check stdout for errors.
+
+    Step 4 — verify FK integrity with validate_csv_integrity for the main
+    fact-to-dimension relationship.
+
     Only call mark_subtask_complete after validation passes.
 
   generate_starter:

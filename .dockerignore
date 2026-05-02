@@ -1,7 +1,13 @@
-# .venv
 .git
 __pycache__
 .pytest_cache
-# .env
 dist
 build
+.env
+data/
+mlflow_data/
+log/
+notebook/
+.vscode/
+*.pyc
+*.pyo
