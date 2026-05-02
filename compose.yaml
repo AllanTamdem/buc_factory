@@ -1,4 +1,25 @@
 services:
+
+  # ── API server (long-running) ───────────────────────────────────
+  api:
+    build: .
+    image: buc-factory:latest
+    container_name: buc-factory-api
+    command: buc-factory-api
+    env_file: .env
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./conf:/app/conf
+      - ./data:/app/data
+      - ./log:/app/log
+    depends_on:
+      mlflow:
+        condition: service_healthy
+
+  # ── CLI one-shot runner ─────────────────────────────────────────
   buc_factory:
     build: .
     image: buc-factory:latest
@@ -16,6 +37,7 @@ services:
     # Run a specific assessment:
     #   docker compose run --rm buc_factory --config conf/industry_spec/p&c_insurance_france.yml --output-dir data/run_001
 
+  # ── MLflow tracking server ──────────────────────────────────────
   mlflow:
     image: ghcr.io/mlflow/mlflow:v3.11.1
     container_name: mlflow
@@ -40,6 +62,7 @@ volumes:
   mlflow_data:
 
 # Useful commands:
+#   docker compose up mlflow api -d      # start MLflow + API server
 #   docker compose up mlflow -d          # start MLflow server only
 #   docker compose run --rm buc_factory --config conf/... --output-dir data/run_001
 #   docker compose down --rmi all        # tear down everything
