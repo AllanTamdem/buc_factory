@@ -151,6 +151,8 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ## Usage
 
+### CLI
+
 ```bash
 # New run
 uv run python -m buc_factory \
@@ -170,6 +172,69 @@ uv run python -m buc_factory \
 
 Logs are written to both the console and `log/agent.log`.
 
+---
+
+### API server
+
+```bash
+buc-factory-api
+# or
+uvicorn buc_factory.app.api:app --reload
+```
+
+The server starts on `http://localhost:8000`. Interactive docs are available at **`http://localhost:8000/docs`**.
+
+#### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/runs` | List all runs with their status |
+| `POST` | `/runs` | Submit a new agent run (returns `202` immediately) |
+| `GET` | `/runs/{run_id}` | Poll the status of a single run |
+| `GET` | `/runs/{run_id}/recruiter.zip` | Download `brief/` + `solution/` |
+| `GET` | `/runs/{run_id}/candidate.zip` | Download `brief/` + `starter/` (without `generate_data.py`) |
+
+#### Example: submit a run
+
+```bash
+curl -X POST http://localhost:8000/runs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "industry": "assurance vie",
+    "company_context": "Un assureur vie français de taille intermédiaire...",
+    "location": "Paris, France",
+    "language": "French",
+    "role": "Data Analyst",
+    "seniority": "Mid-Senior",
+    "tool": "Power BI Desktop",
+    "duration_minutes": 75,
+    "deliverable_format": "PBIP",
+    "dimensions": {
+      "gamme": ["Fonds euros garanti", "Unités de compte (UC)"],
+      "angle": ["Collecte nette", "Comportement de rachat"],
+      "historique_mois": ["24", "36"],
+      "volumetrie": ["100k_contrats", "500k_contrats"]
+    },
+    "entities": ["contrats", "clients", "versements", "rachats", "produits"]
+  }'
+# → {"run_id": "run_010", "status": "queued"}
+```
+
+`dimensions` and `entities` are optional — omit them to let the model infer them during `bootstrap_domain`.
+
+#### Poll status and download
+
+```bash
+# Poll until "done"
+curl http://localhost:8000/runs/run_010
+
+# Download packages once complete
+curl -O http://localhost:8000/runs/run_010/recruiter.zip
+curl -O http://localhost:8000/runs/run_010/candidate.zip
+```
+
+---
+
 ### MLflow UI
 
 Start the tracking server before (or after) running the agent:
@@ -181,7 +246,11 @@ bash .vscode/launch_mlflow.sh
 
 The server uses a local SQLite backend (`mlflow_data/mlflow.db`) and stores artifacts under `mlflow_data/artifacts/`. Both paths are created automatically on first use.
 
+---
+
 ### Docker
+
+**CLI (one-shot run):**
 
 ```bash
 docker build -t buc-factory .
@@ -189,7 +258,6 @@ docker build -t buc-factory .
 docker run --env-file .env \
   -v $(pwd)/conf:/app/conf \
   -v $(pwd)/data:/app/data \
-  -v $(pwd)/mlflow_data:/app/mlflow_data \
   -v $(pwd)/log:/app/log \
   buc-factory \
   uv run python -m buc_factory \
@@ -197,26 +265,40 @@ docker run --env-file .env \
     --output-dir data/run_001
 ```
 
-Mount `mlflow_data/` so tracking data persists across container restarts and is readable by a host-side MLflow server.
+**API server:**
+
+```bash
+docker run --env-file .env \
+  -p 8000:8000 \
+  -v $(pwd)/conf:/app/conf \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/log:/app/log \
+  buc-factory \
+  buc-factory-api
+```
+
+---
 
 ### Docker Compose
 
-Compose runs a dedicated MLflow container (port 5001 on the host) with a named volume for the SQLite DB and artifacts, and the agent connects to it over the internal network.
+Compose provides three services: `mlflow` (tracking server), `api` (HTTP server), and `buc_factory` (CLI one-shot runner).
 
 ```bash
-# Start the MLflow server in the background
-docker compose up mlflow -d
+# Start MLflow + API server
+docker compose up mlflow api -d
 
-# Run an assessment (add --build on first run or after code changes)
+# API is now available at http://localhost:8000
+# MLflow UI at http://localhost:5001
+
+# Run a one-shot CLI assessment
 docker compose run --rm buc_factory \
   --config conf/industry_spec/p&c_insurance_france.yml \
   --output-dir data/run_001
-
-# Open the MLflow UI
-open http://localhost:5001
 ```
 
-The `buc_factory` service inherits `ANTHROPIC_API_KEY` from `.env` and automatically points at `http://mlflow:5000` inside the Docker network.
+Add `--build` on first run or after code changes: `docker compose up --build mlflow api -d`.
+
+All services inherit `ANTHROPIC_API_KEY` from `.env` and connect to MLflow over the internal Docker network (`http://mlflow:5000`).
 
 ---
 
@@ -231,6 +313,9 @@ buc_factory/
 ├── src/buc_factory/
 │   ├── __main__.py             # CLI entry point, MLflow run, state loading, resume logic
 │   ├── tracking.py             # MLflow helpers: metrics, artifacts, prompt registry, LLM judge
+│   ├── app/
+│   │   ├── api.py              # FastAPI app: POST /runs, GET /runs, zip download endpoints
+│   │   └── models.py           # Pydantic I/O models: RunRequest, RunResponse, Dimensions, …
 │   ├── agent/
 │   │   ├── entity.py           # BucState (TypedDict) and PLAN (task order)
 │   │   ├── graph.py            # LangGraph nodes: prepare_task, run_task, validate_task, fail_task
