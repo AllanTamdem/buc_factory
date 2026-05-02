@@ -1,19 +1,19 @@
 """
-Industry-agnostic recruitment assessment agent.
+Industry-agnostic recruitment assessment agent — LangGraph edition.
 
 Generates a complete BI assessment package (candidate brief, starter project,
 recruiter solution) for any industry, defined via a DomainConfig YAML file.
 
 Usage:
     export ANTHROPIC_API_KEY=...
-    python agent.py --config configs/insurance_fr.yaml --output-dir ./run_001
-    python agent.py --config configs/retail_us.yaml --output-dir ./run_002
-    python agent.py --config configs/insurance_fr.yaml --output-dir ./run_001  # resumes
+    python -m buc_factory --config conf/p&c_insurance_france.yml --output-dir ./run_001
+    python -m buc_factory --config conf/retail_usa.yml --output-dir ./run_002
+    python -m buc_factory --config conf/p&c_insurance_france.yml --output-dir ./run_001  # resumes
 """
 
 import argparse
+import json
 import logging
-import os
 import sys
 import time
 from pathlib import Path
@@ -21,13 +21,17 @@ from pathlib import Path
 import mlflow
 from dotenv import load_dotenv
 
-from .agent.entity import AgentState, DomainConfig
-from .agent.prompting import build_system
-from .agent.task import run_subtask
-from .agent.tool import make_tools
-from .llm.claudeai import AnthropicLLM
+from .agent.entity import PLAN, BucState, DomainConfig
+from .agent.graph import build_graph
+from .tracking import (
+    evaluate_outputs,
+    log_config,
+    log_output_artifacts,
+    log_run_summary,
+    log_tasks_summary,
+    setup_mlflow,
+)
 
-# Configure logging to display info messages in a readable format with timestamps and log levels
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -36,57 +40,89 @@ logging.basicConfig(
 LOGGER = logging.getLogger(__name__)
 
 
-def setup_mlflow():
-    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
-    mlflow.set_experiment("buc_factory")
+def _load_initial_state(output_dir: Path) -> BucState:
+    """Return a fresh or resumed BucState from the output directory."""
+    state_file = output_dir / "state.json"
+    saved: dict = {}
+    if state_file.exists():
+        saved = json.loads(state_file.read_text())
+        task_index = saved.get("task_index", 0)
+        if task_index >= len(PLAN):
+            LOGGER.info("✓ all sub-tasks already complete — nothing to do")
+            sys.exit(0)
+        LOGGER.info(f"resuming from task [{PLAN[task_index]}] (index {task_index})")
+    else:
+        task_index = 0
+
+    return BucState(
+        messages=[],
+        output_dir=str(output_dir),
+        task_index=task_index,
+        current_task=PLAN[task_index],
+        tasks_remaining=saved.get("tasks_remaining", PLAN[task_index:]),
+        retry_count=0,
+        bootstrapped_dimensions=saved.get("bootstrapped_dimensions"),
+        bootstrapped_entities=saved.get("bootstrapped_entities"),
+        scenario=saved.get("scenario"),
+        rolled=None,
+        validation_error=None,
+        failed=False,
+    )
 
 
-def main():
+def main() -> None:
+    load_dotenv()
 
-    load_dotenv()  # Load environment variables from .env file
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", required=True, type=Path)
-    parser.add_argument("--output-dir", required=True, type=Path)
+    parser = argparse.ArgumentParser(description="Generate a BI recruitment assessment package.")
+    parser.add_argument("--config", required=True, type=Path, help="Path to domain YAML config.")
+    parser.add_argument("--output-dir", required=True, type=Path, help="Directory for outputs.")
     args = parser.parse_args()
 
     cfg = DomainConfig.from_yaml(args.config)
-    state = AgentState.load_or_init(args.output_dir, args.config)
-    llm = AnthropicLLM(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    tool_schemas, dispatch = make_tools(args.output_dir)
-    system = build_system(cfg)
+    output_dir: Path = args.output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    LOGGER.info(f"agent: industry={cfg.industry}, role={cfg.role}, tool={cfg.tool}")
-    LOGGER.info(f"  output: {args.output_dir}")
+    setup_mlflow()
+    run_name = f"{cfg.industry}__{cfg.role}".replace(" ", "_").lower()
 
-    t0 = time.perf_counter()
-    while True:
-        nxt = state.next_pending()
-        if nxt is None:
-            LOGGER.info("\n✓ all sub-tasks complete")
-            break
-        if nxt.status == "failed":
-            LOGGER.error(f"\n✗ {nxt.name} failed after {nxt.attempts} attempts: {nxt.last_error}")
+    with mlflow.start_run(run_name=run_name):
+        log_config(cfg)
+        mlflow.set_tags(
+            {
+                "output_dir": str(output_dir),
+                "model": "claude-opus-4-7",
+                "task_count": len(PLAN),
+            }
+        )
+
+        LOGGER.info(f"agent: industry={cfg.industry!r}, role={cfg.role!r}, tool={cfg.tool!r}")
+        LOGGER.info(f"  output: {output_dir}")
+
+        initial_state = _load_initial_state(output_dir)
+        graph = build_graph(output_dir, cfg)
+
+        t0 = time.perf_counter()
+        final_state: BucState = graph.invoke(initial_state)
+        total = time.perf_counter() - t0
+
+        m, s = divmod(total, 60)
+        fmt_total = f"{int(m)}m {s:.1f}s"
+
+        failed = bool(final_state.get("failed"))
+        tasks_completed = final_state.get("task_index", 0)
+
+        log_run_summary(total_s=total, failed=failed, tasks_completed=tasks_completed)
+        log_tasks_summary()
+        log_output_artifacts(output_dir)
+
+        if not failed:
+            evaluate_outputs(output_dir, cfg)
+            LOGGER.info(f"\n✓ all sub-tasks complete — total {fmt_total}")
+        else:
+            mlflow.set_tag("failure_task", final_state.get("current_task", "unknown"))
+            LOGGER.error(f"\n✗ agent failed after {fmt_total}")
             sys.exit(1)
-        if not run_subtask(
-            llm, nxt.name, cfg, state, args.output_dir, tool_schemas, dispatch, system
-        ):
-            sys.exit(1)
-
-    total = time.perf_counter() - t0
-    LOGGER.info(f"\n=== final state (total: {total:.1f}s) ===")
-    for t in state.tasks:
-        LOGGER.info(f"  {t.status:8s} {t.name:30s} (attempts: {t.attempts})")
 
 
 if __name__ == "__main__":
     main()
-
-    # setup_mlflow()
-    # with mlflow.start_run(run_name="example_run"):
-    #     lr = 0.01
-    #     acc = random.uniform(0.8, 0.95)
-
-    #     mlflow.log_param("learning_rate", lr)
-    #     mlflow.log_metric("accuracy", acc)
-
-    # print("Run logged.")

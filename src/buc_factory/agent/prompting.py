@@ -78,13 +78,13 @@ def _bootstrap_prompt(cfg: DomainConfig) -> str:
 def _starter_prompt(cfg: DomainConfig) -> str:
     p = _PROMPTS["tasks"]["generate_starter"]
     tool = cfg.tool.lower()
-    fmt = cfg.deliverable_format.upper()
+    deliverable_fmt = cfg.deliverable_format.upper()
 
-    if "power bi" in tool or fmt == "PBIP":
+    if "power bi" in tool or deliverable_fmt == "PBIP":
         return p["power_bi"]
-    if "tableau" in tool or fmt == "TWBX":
+    if "tableau" in tool or deliverable_fmt == "TWBX":
         return p["tableau"]
-    if "looker" in tool or "lookml" in fmt.lower():
+    if "looker" in tool or "lookml" in deliverable_fmt.lower():
         return p["looker"]
     return fmt(p["generic"], tool=cfg.tool, deliverable_format=cfg.deliverable_format)
 

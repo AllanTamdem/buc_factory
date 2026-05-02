@@ -1,8 +1,14 @@
 FROM python:3.12-slim
 WORKDIR /app
+
 RUN pip install uv
+
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen
+RUN uv sync --frozen --no-dev
+
 COPY . .
 
-CMD ["uv", "run", "python", "-m", "src.main"]
+# Ensure writable runtime directories exist inside the image
+RUN mkdir -p log mlflow_data/artifacts
+
+CMD ["uv", "run", "python", "-m", "buc_factory"]

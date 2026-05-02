@@ -9,6 +9,7 @@ dependencies = [
     "dotenv>=0.9.9",
     "langchain>=1.2.15",
     "langchain-anthropic>=1.4.1",
+    "langgraph>=1.0.0",
     "mlflow>=3.11.1",
 ]
 

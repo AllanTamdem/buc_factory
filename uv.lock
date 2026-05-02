@@ -200,6 +200,7 @@ dependencies = [
     { name = "dotenv" },
     { name = "langchain" },
     { name = "langchain-anthropic" },
+    { name = "langgraph" },
     { name = "mlflow" },
 ]
 
@@ -217,6 +218,7 @@ requires-dist = [
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "langchain", specifier = ">=1.2.15" },
     { name = "langchain-anthropic", specifier = ">=1.4.1" },
+    { name = "langgraph", specifier = ">=1.0.0" },
     { name = "mlflow", specifier = ">=3.11.1" },
 ]
 

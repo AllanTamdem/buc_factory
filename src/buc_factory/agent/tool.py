@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -11,7 +12,14 @@ from pathlib import Path
 
 def make_tools(output_dir: Path) -> tuple[list[dict], dict[str, Callable]]:
 
-    def write_file(path: str, content: str) -> str:
+    def write_file(path: str, content: str | None = None) -> str:
+        if content is None:
+            return (
+                "ERROR: 'content' is required. "
+                "You must call write_file with BOTH arguments in a single call: "
+                "write_file(path='...', content='<complete file text>'). "
+                "Do not split into multiple calls."
+            )
         full = output_dir / path
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content, encoding="utf-8")
@@ -30,9 +38,12 @@ def make_tools(output_dir: Path) -> tuple[list[dict], dict[str, Callable]]:
         return "\n".join(str(p.relative_to(output_dir)) for p in full.rglob("*") if p.is_file())
 
     def run_python(script_path: str) -> str:
-        full = output_dir / script_path
+        full = (output_dir / script_path).resolve()
+        if not str(full).startswith(str(output_dir.resolve())):
+            return "ERROR: script must be inside the output directory"
         if not full.exists():
-            return f"ERROR: {full} does not exist"
+            return f"ERROR: {script_path} does not exist"
+        env = {**os.environ, "OUTPUT_DIR": str(output_dir.resolve())}
         try:
             result = subprocess.run(
                 [sys.executable, str(full)],
@@ -40,6 +51,7 @@ def make_tools(output_dir: Path) -> tuple[list[dict], dict[str, Callable]]:
                 capture_output=True,
                 text=True,
                 timeout=60,
+                env=env,
             )
             return (
                 f"exit={result.returncode}\n"
@@ -84,25 +96,50 @@ def make_tools(output_dir: Path) -> tuple[list[dict], dict[str, Callable]]:
     schemas = [
         _tool(
             "write_file",
-            "Write a text file. Overwrites if exists.",
-            {"path": {"type": "string"}, "content": {"type": "string"}},
+            (
+                "Write text to a file relative to the output directory. "
+                "Overwrites if exists. You MUST provide both path and content "
+                "in a single call."
+            ),
+            {
+                "path": {
+                    "type": "string",
+                    "description": "Relative file path, e.g. 'data/generate.py'",
+                },
+                "content": {
+                    "type": "string",
+                    "description": (
+                        "Complete text content to write — must be the full file, not a placeholder"
+                    ),
+                },
+            },
             ["path", "content"],
         ),
         _tool(
             "read_file",
-            "Read a previously written file.",
-            {"path": {"type": "string"}},
+            "Read a previously written file. Path is relative to the output directory.",
+            {"path": {"type": "string", "description": "Relative file path"}},
             ["path"],
         ),
         _tool(
             "list_files",
-            "List files under a directory.",
-            {"directory": {"type": "string"}},
+            "List files under a directory relative to the output directory.",
+            {
+                "directory": {
+                    "type": "string",
+                    "description": "Relative directory path; defaults to '.' for all files",
+                }
+            },
         ),
         _tool(
             "run_python",
-            "Execute a Python script. Returns stdout/stderr/exit.",
-            {"script_path": {"type": "string"}},
+            "Execute a Python script. Returns stdout/stderr/exit code.",
+            {
+                "script_path": {
+                    "type": "string",
+                    "description": "Relative path to the .py file to execute",
+                }
+            },
             ["script_path"],
         ),
         _tool(
