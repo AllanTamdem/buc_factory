@@ -14,7 +14,12 @@ def test_plan_order():
 
 
 def test_plan_contains_required_tasks():
-    for task in ("roll_scenario", "write_brief", "generate_data_script", "write_recruiter_solution"):
+    for task in (
+        "roll_scenario",
+        "write_brief",
+        "generate_data_script",
+        "write_recruiter_solution",
+    ):
         assert task in PLAN
 
 

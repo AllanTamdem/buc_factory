@@ -59,6 +59,7 @@ _id_lock = Lock()
 
 # ── app lifecycle ──────────────────────────────────────────────────
 
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):  # noqa: ARG001
     setup_mlflow()
@@ -73,6 +74,7 @@ app = FastAPI(
 
 
 # ── internal helpers ───────────────────────────────────────────────
+
 
 def _next_run_id() -> str:
     """Atomically allocate the next run_NNN directory and return its name."""
@@ -199,6 +201,7 @@ def _execute_run(run_id: str, cfg: DomainConfig, output_dir: Path) -> None:
 
 
 # ── endpoints ──────────────────────────────────────────────────────
+
 
 @app.get("/runs", response_model=RunListResponse)
 def list_runs() -> RunListResponse:

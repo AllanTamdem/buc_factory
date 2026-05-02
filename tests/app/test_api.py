@@ -4,20 +4,19 @@ import zipfile
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import buc_factory.app.api as api_module
-from buc_factory.app.api import app, _resolve_run
-from fastapi import HTTPException
+from buc_factory.app.api import _resolve_run, app
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(api_module, "DATA_DIR", tmp_path)
     monkeypatch.setattr(api_module, "_run_status", {})
-    with patch("buc_factory.app.api.setup_mlflow"):
-        with TestClient(app) as c:
-            yield c, tmp_path
+    with patch("buc_factory.app.api.setup_mlflow"), TestClient(app) as c:
+        yield c, tmp_path
 
 
 _MINIMAL_PAYLOAD = {
