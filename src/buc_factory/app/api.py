@@ -37,6 +37,7 @@ from ..tracking import (
     log_output_artifacts,
     log_run_summary,
     log_tasks_summary,
+    reset_run,
     setup_mlflow,
 )
 from .models import RunListResponse, RunRequest, RunResponse, RunSummary
@@ -162,14 +163,17 @@ def _load_initial_state(output_dir: Path) -> BucState:
 def _execute_run(run_id: str, cfg: DomainConfig, output_dir: Path) -> None:
     """Full agent pipeline — runs synchronously in a background thread."""
     _run_status[run_id] = "running"
+    reset_run()
     run_name = f"{cfg.industry}__{cfg.role}".replace(" ", "_").lower()
+    LOGGER.info(f"agent: industry={cfg.industry!r}, role={cfg.role!r}, tool={cfg.tool!r}")
+    LOGGER.info(f"  output: {output_dir}")
     try:
         with mlflow.start_run(run_name=run_name):
             log_config(cfg)
             mlflow.set_tags(
                 {
                     "output_dir": str(output_dir),
-                    "model": "claude-opus-4-7",
+                    "model": "claude-sonnet-4-6 (mixed)",
                     "task_count": len(PLAN),
                 }
             )
@@ -180,15 +184,22 @@ def _execute_run(run_id: str, cfg: DomainConfig, output_dir: Path) -> None:
             final_state: BucState = graph.invoke(initial_state)
             total = time.perf_counter() - t0
 
+            m, s = divmod(total, 60)
+            fmt_total = f"{int(m)}m {s:.1f}s"
+
             failed = bool(final_state.get("failed"))
             tasks_completed = final_state.get("task_index", 0)
 
             log_run_summary(total_s=total, failed=failed, tasks_completed=tasks_completed)
-            log_tasks_summary()
+            log_tasks_summary(wall_clock_s=total)
             log_output_artifacts(output_dir)
 
             if not failed:
                 evaluate_outputs(output_dir, cfg)
+                LOGGER.info(f"\n✓ [{run_id}] all sub-tasks complete — total {fmt_total}")
+            else:
+                mlflow.set_tag("failure_task", final_state.get("current_task", "unknown"))
+                LOGGER.error(f"\n✗ [{run_id}] agent failed after {fmt_total}")
 
         _run_status[run_id] = "failed" if failed else "done"
 

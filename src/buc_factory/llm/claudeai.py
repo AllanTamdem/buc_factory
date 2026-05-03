@@ -49,12 +49,43 @@ class AnthropicLLM:
         self._model = model
         self._default_max_tokens = max_tokens
         self._api_key = api_key
+        self._client_cache: dict[tuple[str, int], ChatAnthropic] = {}
 
-    def _llm_with_tools(self, max_tokens: int, tools: list[dict]) -> ChatAnthropic:
-        kwargs: dict = {"model": self._model, "max_tokens": max_tokens}
-        if self._api_key:
-            kwargs["api_key"] = self._api_key
-        return ChatAnthropic(**kwargs).bind_tools(tools)  # type: ignore[return-value]
+    def _get_client(self, model: str, max_tokens: int) -> ChatAnthropic:
+        key = (model, max_tokens)
+        if key not in self._client_cache:
+            kwargs: dict = {"model": model, "max_tokens": max_tokens}
+            if self._api_key:
+                kwargs["api_key"] = self._api_key
+            self._client_cache[key] = ChatAnthropic(**kwargs)
+        return self._client_cache[key]
+
+    def _llm_with_tools(
+        self, max_tokens: int, tools: list[dict], model: str | None = None
+    ) -> ChatAnthropic:
+        return self._get_client(model or self._model, max_tokens).bind_tools(tools)  # type: ignore[return-value]
+
+    def complete(
+        self,
+        prompt: str,
+        *,
+        model: str | None = None,
+        max_tokens: int = 512,
+    ) -> str:
+        """Single-turn text completion without tool use.
+
+        Uses the raw Anthropic client (not LangChain) so it is safe to call
+        from inside an MLflow evaluation harness with no autolog side-effects.
+        """
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=self._api_key or None)
+        response = client.messages.create(
+            model=model or self._model,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text
 
     def run_agent_loop(
         self,
@@ -65,6 +96,7 @@ class AnthropicLLM:
         max_tokens: int | None = None,
         max_steps: int = 40,
         done_tool: str = "mark_subtask_complete",
+        model: str | None = None,
     ) -> tuple[list[BaseMessage], int, int]:
         """
         Agentic loop: invoke ChatAnthropic, dispatch tool calls, repeat.
@@ -96,13 +128,18 @@ class AnthropicLLM:
             token counts are summed across all model calls in the loop.
         """
         _max_tokens = max_tokens or self._default_max_tokens
-        llm = self._llm_with_tools(_max_tokens, tools)
+        llm = self._llm_with_tools(_max_tokens, tools, model=model)
+        # Note: SystemMessage use a cache_control of "ephemeral" to ensure they are not included
+        # in the token count for the model calls, since they are the same for every turn.
+        system_msg = SystemMessage(
+            content=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+        )
         msgs = list(messages)
         total_input = 0
         total_output = 0
 
         for _ in range(max_steps):
-            response: AIMessage = llm.invoke([SystemMessage(content=system)] + msgs)
+            response: AIMessage = llm.invoke([system_msg] + msgs)
             msgs.append(response)
 
             if response.usage_metadata:

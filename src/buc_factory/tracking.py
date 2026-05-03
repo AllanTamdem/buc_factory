@@ -7,7 +7,6 @@ from pathlib import Path
 
 import mlflow
 import mlflow.genai
-import mlflow.langchain
 from mlflow.entities.assessment import Feedback
 
 from .agent.entity import DomainConfig
@@ -24,7 +23,7 @@ _MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-haiku-4-5-20251001": (1.0, 5.0),
 }
-_AGENT_MODEL = "claude-opus-4-7"
+_AGENT_MODEL = "claude-sonnet-4-6"
 
 
 def _token_cost(input_tokens: int, output_tokens: int, model: str = _AGENT_MODEL) -> float:
@@ -33,7 +32,7 @@ def _token_cost(input_tokens: int, output_tokens: int, model: str = _AGENT_MODEL
 
 
 def setup_mlflow(experiment_name: str = _EXPERIMENT) -> None:
-    """Set experiment and enable LangGraph trace autologging.
+    """Set experiment and configure artifact location.
 
     When running against a local file-based store, ensures the experiment's
     artifact_location points to a writable project-local path — soft-deleting and
@@ -59,8 +58,12 @@ def setup_mlflow(experiment_name: str = _EXPERIMENT) -> None:
             client.create_experiment(experiment_name, artifact_location=artifact_root)
 
     mlflow.set_experiment(experiment_name)
-    mlflow.langchain.autolog(log_traces=True, silent=True)
     _register_judge_prompt()
+    _task_log.clear()
+
+
+def reset_run() -> None:
+    """Clear per-run state. Must be called at the start of every agent run."""
     _task_log.clear()
 
 
@@ -89,6 +92,7 @@ def log_task_result(
     step: int,
     input_tokens: int = 0,
     output_tokens: int = 0,
+    model: str = _AGENT_MODEL,
 ) -> None:
     """Log per-task outcome metrics; step enables timeline views in the MLflow UI."""
     mlflow.log_metrics(
@@ -101,19 +105,22 @@ def log_task_result(
         },
         step=step,
     )
+    m, s = divmod(elapsed_s, 60)
     _task_log.append(
         {
             "task": task_name,
             "attempts": retries + 1 if ok else retries,
             "status": "✓" if ok else "✗",
+            "duration": f"{int(m)}m {s:.1f}s",
+            "elapsed_s": elapsed_s,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
-            "cost": _token_cost(input_tokens, output_tokens),
+            "cost": _token_cost(input_tokens, output_tokens, model),
         }
     )
 
 
-def log_tasks_summary() -> None:
+def log_tasks_summary(wall_clock_s: float | None = None) -> None:
     """Write a markdown table of task outcomes as an MLflow artifact."""
     if not _task_log:
         return
@@ -121,19 +128,30 @@ def log_tasks_summary() -> None:
     total_out = sum(e["output_tokens"] for e in _task_log)
     total_cost = sum(e["cost"] for e in _task_log)
 
+    cpu_s = sum(e["elapsed_s"] for e in _task_log)
+    cm, cs = divmod(cpu_s, 60)
+    cpu_str = f"{int(cm)}m {cs:.1f}s"
+
+    if wall_clock_s is not None:
+        wm, ws = divmod(wall_clock_s, 60)
+        duration_cell = f"{int(wm)}m {ws:.1f}s wall / {cpu_str} cpu"
+    else:
+        duration_cell = cpu_str
+
     lines = [
         "# Task Summary\n",
-        "| Task | Attempts | Status | Input tok | Output tok | Cost ($) |",
-        "|------|:--------:|:------:|----------:|-----------:|---------:|",
+        "| Task | Attempts | Status | Duration | Input tok | Output tok | Cost ($) |",
+        "|------|:--------:|:------:|:--------:|----------:|-----------:|---------:|",
     ]
     for e in _task_log:
         lines.append(
-            f"| {e['task']} | {e['attempts']} | {e['status']} |"
+            f"| {e['task']} | {e['attempts']} | {e['status']} | {e['duration']} |"
             f" {e['input_tokens']:,} | {e['output_tokens']:,} | ${e['cost']:.4f} |"
         )
     lines += [
-        "|------|:--------:|:------:|----------:|-----------:|---------:|",
-        f"| **Total** | | | **{total_in:,}** | **{total_out:,}** | **${total_cost:.4f}** |",
+        "|------|:--------:|:------:|:--------:|----------:|-----------:|---------:|",
+        f"| **Total** | | | **{duration_cell}** |"
+        f" **{total_in:,}** | **{total_out:,}** | **${total_cost:.4f}** |",
     ]
     mlflow.log_metrics(
         {
@@ -281,21 +299,22 @@ def evaluate_outputs(output_dir: Path, cfg: DomainConfig) -> None:
     solution_file = output_dir / "solution/recruiter_solution.md"
     if brief_file.exists() and solution_file.exists():
         try:
-            result = mlflow.genai.evaluate(
-                data=[
-                    {
-                        "inputs": {"brief": brief_file.read_text(encoding="utf-8")},
-                        "outputs": solution_file.read_text(encoding="utf-8"),
-                    }
-                ],
-                scorers=[solution_relevancy],
-            )
-            table = result.tables.get("eval_results_table")
-            score = None
-            if table is not None and not table.empty and "solution_relevancy" in table.columns:
-                score = table["solution_relevancy"].iloc[0]
-            else:
-                score = result.metrics.get("solution_relevancy/mean")
+            with mlflow.start_run(run_name="evaluate", nested=True):
+                result = mlflow.genai.evaluate(
+                    data=[
+                        {
+                            "inputs": {"brief": brief_file.read_text(encoding="utf-8")},
+                            "outputs": solution_file.read_text(encoding="utf-8"),
+                        }
+                    ],
+                    scorers=[solution_relevancy],
+                )
+                table = result.tables.get("eval_results_table")
+                score = None
+                if table is not None and not table.empty and "solution_relevancy" in table.columns:
+                    score = table["solution_relevancy"].iloc[0]
+                else:
+                    score = result.metrics.get("solution_relevancy/mean")
             if score is not None:
                 mlflow.log_metric("solution_relevancy_score", float(score))
         except Exception as exc:
@@ -318,6 +337,8 @@ You are evaluating a recruiter solution for a BI technical assessment.
 
 Score how well the recruiter solution covers and directly answers every requirement, \
 question, and deliverable stated in the candidate brief.
+
+Write the reasoning in the same language as the brief and solution.
 
 Respond with a JSON object only — no prose outside the JSON:
 {"score": <integer 1-10>, "reasoning": "<one paragraph>"}
@@ -367,23 +388,11 @@ def solution_relevancy(*, inputs: dict, outputs: str, **_: object) -> Feedback:
     """LLM-as-judge scorer backed by Claude Haiku and the registered judge prompt."""
     import re
 
-    import anthropic
+    from .llm.claudeai import AnthropicLLM
 
     brief = inputs["brief"]
-    prompt_version = mlflow.genai.load_prompt(_JUDGE_PROMPT_NAME, allow_missing=True)
-    prompt_text = (
-        prompt_version.format(brief=brief, solution=outputs)
-        if prompt_version is not None
-        else _RELEVANCY_PROMPT.replace("{{brief}}", brief).replace("{{solution}}", outputs)
-    )
-
-    client = anthropic.Anthropic()
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=512,
-        messages=[{"role": "user", "content": prompt_text}],
-    )
-    raw = response.content[0].text.strip()
+    prompt_text = _RELEVANCY_PROMPT.replace("{{brief}}", brief).replace("{{solution}}", outputs)
+    raw = AnthropicLLM().complete(prompt_text, model="claude-haiku-4-5-20251001", max_tokens=512)
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     parsed = json.loads(match.group()) if match else json.loads(raw)
     score = float(parsed["score"])

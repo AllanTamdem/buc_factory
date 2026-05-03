@@ -37,13 +37,20 @@ For every run the agent writes a self-contained output directory:
 
 ## Agent workflow
 
-The agent is a **LangGraph state machine** with four nodes that loop until all eight sub-tasks complete or a task exhausts its retry budget.
+The agent is a **LangGraph state machine** with five nodes that loop until all eight sub-tasks complete or a task exhausts its retry budget.
 
 ```
-prepare_task → run_task → validate_task ──► prepare_task  (next task or retry)
+prepare_task → run_task → validate_task ──► prepare_task       (sequential retry / next)
+                                        ├──► run_parallel_group ──► prepare_task
+                                        │                        └──► fail_task ──► END
                                         ├──► fail_task ──► END
-                                        └──► END           (all tasks done)
+                                        └──► END                (all tasks done)
 ```
+
+Two task pairs run concurrently via `ThreadPoolExecutor`:
+
+- After `roll_scenario`: **`write_brief` ∥ `design_data_schema`**
+- After `generate_data_script`: **`generate_starter` ∥ `write_recruiter_solution`**
 
 ### The eight sub-tasks (in order)
 
@@ -53,9 +60,9 @@ prepare_task → run_task → validate_task ──► prepare_task  (next task o
 | 2 | `roll_scenario` | Writes `scenario.json` with one value randomly sampled per dimension (rolled in Python, not by the model) | All dimension keys present |
 | 3 | `write_brief` | Writes `brief/candidate_brief.md` in the target language, 600-900 words, anchored to the rolled scenario | File exists, ≥ 1 500 chars |
 | 4 | `design_data_schema` | Writes `brief/data_schema.json` with column definitions, FK relationships, and 2-4 realistic data traps | ≥ 80% of entities covered, at least one trap declared |
-| 5 | `generate_data_script` | Reads the schema, writes `starter/generate_data.py`, runs it, verifies FK integrity | All entity CSVs present, FK heuristic passes |
-| 6 | `generate_starter` | Builds the Power BI PBIP project skeleton under `starter/` | Required PBIP files present and valid JSON |
-| 7 | `write_recruiter_solution` | Writes `solution/recruiter_solution.md` with full answer key | File exists, ≥ 3 000 chars, contains DAX/calc keyword |
+| 5 | `generate_data_script` | Writes `starter/generate_data.py` (schema pre-loaded in prompt), runs it, verifies FK integrity | All entity CSVs present, FK heuristic passes |
+| 6 | `generate_starter` | Builds the tool-specific starter project under `starter/` (PBIP, TWBX, or LookML; schema pre-loaded in prompt) | Required files present and valid JSON/XML |
+| 7 | `write_recruiter_solution` | Writes `solution/recruiter_solution.md` (brief, scenario, and schema pre-loaded in prompt) | File exists, ≥ 3 000 chars, contains DAX/calc keyword |
 | 8 | `final_assembly` | Checks all expected artifacts are present | All required paths exist |
 
 ### Retry logic
@@ -72,7 +79,7 @@ Each task has a budget of **3 attempts** (`MAX_RETRIES_PER_TASK`). On failure th
 
 ### Domain config (YAML)
 
-Every run requires a domain config file. Two examples are provided under `conf/industry_spec/`.
+Every run requires a domain config file. Three examples are provided under `conf/industry_spec/`.
 
 **Fully specified** (pinned dimensions and entities — deterministic across runs):
 
@@ -122,6 +129,7 @@ deliverable_format: "PBIP"
 |----------------------|----------------|
 | `PBIP` | Power BI Desktop project (default) |
 | `TWBX` | Tableau workbook scaffold |
+| `LookML` | LookML model + views |
 | *(other)* | Generic file set |
 
 ### Prompt templates
@@ -354,7 +362,7 @@ Returns `(list[BaseMessage], total_input_tokens, total_output_tokens)` — token
 
 Token budgets by task:
 - Default tasks: 8 000 tokens
-- `generate_data_script`, `write_recruiter_solution`: 16 000 tokens (large file output)
+- `generate_data_script`, `generate_starter`, `write_recruiter_solution`: 16 000 tokens (large file output)
 
 ### `make_tools()` (`agent/tool.py`)
 
@@ -363,9 +371,9 @@ Returns `(schemas, dispatch)`. The model only sees `run_python` during `generate
 | Tool | Description |
 |------|-------------|
 | `write_file(path, content)` | Write text to a file inside the output dir |
-| `read_file(path)` | Read a previously written file |
+| `read_file(path)` | Read a previously written file (not available for `bootstrap_domain`, `roll_scenario`, `write_brief`, `design_data_schema` — their context is pre-loaded in the prompt) |
 | `list_files(directory)` | List files under a directory |
-| `run_python(script_path)` | Execute a Python script; returns stdout/stderr/exit code |
+| `run_python(script_path)` | Execute a Python script; returns stdout/stderr/exit code (only available during `generate_data_script`) |
 | `validate_csv_integrity(spec_json)` | Check FK integrity between a fact and dimension CSV |
 | `validate_json(path)` | Verify a file contains valid JSON |
 | `mark_subtask_complete(summary)` | Signal task completion (exits the tool-use loop) |
@@ -403,8 +411,7 @@ Every agent run is wrapped in an `mlflow.start_run()`. The following are recorde
 | Task prompts (last attempt per task) | Artifacts under `prompts/` |
 | System prompt | Prompt Registry (`buc-factory-system`) |
 | All output files from `--output-dir` | Artifacts under `outputs/` |
-| Solution relevancy score (1–10, Claude Haiku LLM judge) | Metric `solution_relevancy_score` + Judges view |
-| LangGraph traces | Trace view (via `mlflow.langchain.autolog`) |
+| Solution relevancy score (1–10, Claude Haiku LLM judge) | Metric `solution_relevancy_score`; evaluation details in a nested child run |
 
 The judge prompt is registered in the Prompt Registry as `buc-factory-solution-relevancy-judge` with `PromptModelConfig` pointing to `claude-haiku-4-5-20251001`.
 
