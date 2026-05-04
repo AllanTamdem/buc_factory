@@ -374,7 +374,7 @@ Returns `(schemas, dispatch)`. The model only sees `run_python` during `generate
 | `read_file(path)` | Read a previously written file (not available for `bootstrap_domain`, `roll_scenario`, `write_brief`, `design_data_schema` — their context is pre-loaded in the prompt) |
 | `list_files(directory)` | List files under a directory |
 | `run_python(script_path)` | Execute a Python script; returns stdout/stderr/exit code (only available during `generate_data_script`) |
-| `validate_csv_integrity(spec_json)` | Check FK integrity between a fact and dimension CSV |
+| `validate_csv_integrity(spec_json)` | Check FK integrity between a fact and dimension CSV (only available during `generate_data_script`) |
 | `validate_json(path)` | Verify a file contains valid JSON |
 | `mark_subtask_complete(summary)` | Signal task completion (exits the tool-use loop) |
 

@@ -66,8 +66,8 @@ def make_tools(output_dir: Path) -> tuple[list[dict], dict[str, Callable]]:
             import pandas as pd
 
             spec = json.loads(spec_json)
-            fact = pd.read_csv(output_dir / spec["facts"])
-            dim = pd.read_csv(output_dir / spec["dim"])
+            fact = pd.read_csv(output_dir / spec["facts"], sep=None, engine="python")
+            dim = pd.read_csv(output_dir / spec["dim"], sep=None, engine="python")
             orphans = set(fact[spec["fact_fk"]]) - set(dim[spec["dim_pk"]])
             if orphans:
                 return f"FAIL: {len(orphans)} orphan FK values, sample: {list(orphans)[:5]}"

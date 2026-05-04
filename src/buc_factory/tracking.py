@@ -7,10 +7,8 @@ from pathlib import Path
 
 import mlflow
 import mlflow.genai
-from mlflow.entities.assessment import Feedback
 
 from .agent.entity import DomainConfig
-from .agent.prompting import dax_or_calc
 
 LOGGER = logging.getLogger(__name__)
 
@@ -89,22 +87,11 @@ def log_task_result(
     ok: bool,
     elapsed_s: float,
     retries: int,
-    step: int,
     input_tokens: int = 0,
     output_tokens: int = 0,
     model: str = _AGENT_MODEL,
 ) -> None:
-    """Log per-task outcome metrics; step enables timeline views in the MLflow UI."""
-    mlflow.log_metrics(
-        {
-            f"task.{task_name}.success": float(ok),
-            f"task.{task_name}.duration_s": round(elapsed_s, 2),
-            f"task.{task_name}.retries": float(retries),
-            f"task.{task_name}.input_tokens": float(input_tokens),
-            f"task.{task_name}.output_tokens": float(output_tokens),
-        },
-        step=step,
-    )
+    """Accumulate per-task outcome for the run summary table."""
     m, s = divmod(elapsed_s, 60)
     _task_log.append(
         {
@@ -153,28 +140,10 @@ def log_tasks_summary(wall_clock_s: float | None = None) -> None:
         f"| **Total** | | | **{duration_cell}** |"
         f" **{total_in:,}** | **{total_out:,}** | **${total_cost:.4f}** |",
     ]
-    mlflow.log_metrics(
-        {
-            "total_input_tokens": float(total_in),
-            "total_output_tokens": float(total_out),
-            "total_cost_usd": total_cost,
-        }
-    )
     try:
         mlflow.log_text("\n".join(lines) + "\n", "task_summary.md")
     except Exception as exc:
         LOGGER.warning("task summary logging skipped: %s", exc)
-
-
-def log_run_summary(*, total_s: float, failed: bool, tasks_completed: int) -> None:
-    """Log end-of-run rollup metrics."""
-    mlflow.log_metrics(
-        {
-            "total_duration_s": round(total_s, 2),
-            "run_success": float(not failed),
-            "tasks_completed": float(tasks_completed),
-        }
-    )
 
 
 def register_system_prompt(template: str) -> None:
@@ -218,105 +187,30 @@ def log_output_artifacts(output_dir: Path) -> None:
         mlflow.set_tag("output_dir_local", str(output_dir.resolve()))
 
 
-def evaluate_outputs(output_dir: Path, cfg: DomainConfig) -> None:
-    """Log quality metrics and run the solution_relevancy LLM judge.
-
-    Metrics logged:
-    - bootstrap.dimension_count / bootstrap.entity_count
-    - schema.table_count / schema.trap_count
-    - {artifact}.char_count / .min_chars_met / .has_calc_keyword
-    - solution_relevancy_score (1–10, via Claude Haiku judge)
-    """
-    # ── direct scalar metrics from structured artifacts ───────────
-    bootstrap_file = output_dir / "bootstrap.json"
-    if bootstrap_file.exists():
-        try:
-            data = json.loads(bootstrap_file.read_text())
-            mlflow.log_metrics(
-                {
-                    "bootstrap.dimension_count": float(len(data.get("dimensions", {}))),
-                    "bootstrap.entity_count": float(len(data.get("entities", []))),
-                }
-            )
-        except Exception as exc:
-            LOGGER.warning("bootstrap metrics skipped: %s", exc)
-
-    schema_file = output_dir / "brief/data_schema.json"
-    if schema_file.exists():
-        try:
-            schema = json.loads(schema_file.read_text())
-            mlflow.log_metrics(
-                {
-                    "schema.table_count": float(len(schema.get("files", []))),
-                    "schema.trap_count": float(len(schema.get("traps", []))),
-                }
-            )
-        except Exception as exc:
-            LOGGER.warning("schema metrics skipped: %s", exc)
-
-    # ── text artifact evaluators ───────────────────────────────────
-    calc_kw = dax_or_calc(cfg.tool).split()[0].lower()
-
-    rows: list[dict] = []
-
-    brief = output_dir / "brief/candidate_brief.md"
-    if brief.exists():
-        rows.append(
-            {
-                "artifact": "candidate_brief",
-                "text": brief.read_text(encoding="utf-8"),
-                "min_chars": 1500,
-                "keyword": "",
-            }
-        )
-
-    solution = output_dir / "solution/recruiter_solution.md"
-    if solution.exists():
-        rows.append(
-            {
-                "artifact": "recruiter_solution",
-                "text": solution.read_text(encoding="utf-8"),
-                "min_chars": 3000,
-                "keyword": calc_kw,
-            }
-        )
-
-    if not rows:
-        return
-
-    metrics: dict[str, float] = {}
-    for row in rows:
-        name = row["artifact"]
-        text = row["text"]
-        metrics[f"{name}.char_count"] = float(len(text))
-        metrics[f"{name}.min_chars_met"] = 1.0 if len(text) >= row["min_chars"] else 0.0
-        kw = row["keyword"]
-        metrics[f"{name}.has_calc_keyword"] = 1.0 if (not kw or kw in text.lower()) else 0.0
-
-    mlflow.log_metrics(metrics)
-
+def evaluate_outputs(output_dir: Path) -> None:
+    """Run the solution_relevancy LLM judge and log the score."""
     brief_file = output_dir / "brief/candidate_brief.md"
     solution_file = output_dir / "solution/recruiter_solution.md"
     if brief_file.exists() and solution_file.exists():
         try:
-            with mlflow.start_run(run_name="evaluate", nested=True):
-                result = mlflow.genai.evaluate(
-                    data=[
-                        {
-                            "inputs": {"brief": brief_file.read_text(encoding="utf-8")},
-                            "outputs": solution_file.read_text(encoding="utf-8"),
-                        }
-                    ],
-                    scorers=[solution_relevancy],
-                )
-                table = result.tables.get("eval_results_table")
-                score = None
-                if table is not None and not table.empty and "solution_relevancy" in table.columns:
-                    score = table["solution_relevancy"].iloc[0]
-                else:
-                    score = result.metrics.get("solution_relevancy/mean")
-            if score is not None:
-                mlflow.log_metric("solution_relevancy_score", float(score))
+            import re
+
+            from .llm.claudeai import AnthropicLLM
+
+            brief_text = brief_file.read_text(encoding="utf-8")
+            solution_text = solution_file.read_text(encoding="utf-8")
+            prompt_text = _RELEVANCY_PROMPT.replace("{{brief}}", brief_text)
+            prompt_text = prompt_text.replace("{{solution}}", solution_text)
+            raw = AnthropicLLM().complete(
+                prompt_text, model="claude-haiku-4-5-20251001", max_tokens=512
+            )
+            match = re.search(r"\{.*\}", raw, re.DOTALL)
+            parsed = json.loads(match.group()) if match else json.loads(raw)
+            score = float(parsed["score"])
+            reasoning = str(parsed["reasoning"])
+            LOGGER.info("  solution relevancy score: %.0f/10 — %s", score, reasoning)
+            mlflow.log_metric("solution_relevancy_score", score)
+            mlflow.set_tag("solution_relevancy_reasoning", reasoning)
         except Exception as exc:
             LOGGER.warning("solution relevancy scoring failed: %s", exc)
 
@@ -338,10 +232,11 @@ You are evaluating a recruiter solution for a BI technical assessment.
 Score how well the recruiter solution covers and directly answers every requirement, \
 question, and deliverable stated in the candidate brief.
 
-Write the reasoning in the same language as the brief and solution.
+Write the reasoning in the same language as the brief and solution. \
+Keep it to 2-3 sentences: what is well covered, what is missing or weak.
 
 Respond with a JSON object only — no prose outside the JSON:
-{"score": <integer 1-10>, "reasoning": "<one paragraph>"}
+{"score": <integer 1-10>, "reasoning": "<2-3 sentences>"}
 
 Scoring guide:
 - 9-10: all requirements fully addressed with concrete specifics
@@ -374,29 +269,3 @@ def _register_judge_prompt() -> None:
         )
     except Exception as exc:
         LOGGER.warning("judge prompt registration skipped: %s", exc)
-
-
-# ── scorer ─────────────────────────────────────────────────────────────────────
-
-
-@mlflow.genai.scorer(
-    name="solution_relevancy",
-    description="Scores (1–10) how well the recruiter solution covers the candidate brief.",
-    aggregations=["mean"],
-)
-def solution_relevancy(*, inputs: dict, outputs: str, **_: object) -> Feedback:
-    """LLM-as-judge scorer backed by Claude Haiku and the registered judge prompt."""
-    import re
-
-    from .llm.claudeai import AnthropicLLM
-
-    brief = inputs["brief"]
-    prompt_text = _RELEVANCY_PROMPT.replace("{{brief}}", brief).replace("{{solution}}", outputs)
-    raw = AnthropicLLM().complete(prompt_text, model="claude-haiku-4-5-20251001", max_tokens=512)
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    parsed = json.loads(match.group()) if match else json.loads(raw)
-    score = float(parsed["score"])
-    reasoning = str(parsed["reasoning"])
-
-    LOGGER.info("  solution relevancy score: %.0f/10 — %s", score, reasoning)
-    return Feedback(name="solution_relevancy", value=score, rationale=reasoning)

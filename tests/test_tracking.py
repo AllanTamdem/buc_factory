@@ -1,5 +1,3 @@
-from unittest.mock import patch
-
 import pytest
 
 import buc_factory.tracking as tracking
@@ -67,17 +65,15 @@ def test_reset_run_on_empty_log_is_safe():
 
 
 def test_log_task_result_success_appends_entry():
-    with patch("mlflow.log_metrics"):
-        log_task_result(
-            "write_brief",
-            ok=True,
-            elapsed_s=12.5,
-            retries=0,
-            step=2,
-            input_tokens=1000,
-            output_tokens=500,
-            model="claude-sonnet-4-6",
-        )
+    log_task_result(
+        "write_brief",
+        ok=True,
+        elapsed_s=12.5,
+        retries=0,
+        input_tokens=1000,
+        output_tokens=500,
+        model="claude-sonnet-4-6",
+    )
     assert len(tracking._task_log) == 1
     e = tracking._task_log[0]
     assert e["task"] == "write_brief"
@@ -89,59 +85,52 @@ def test_log_task_result_success_appends_entry():
 
 
 def test_log_task_result_failure_appends_entry():
-    with patch("mlflow.log_metrics"):
-        log_task_result(
-            "write_brief",
-            ok=False,
-            elapsed_s=5.0,
-            retries=2,
-            step=2,
-            input_tokens=500,
-            output_tokens=200,
-        )
+    log_task_result(
+        "write_brief",
+        ok=False,
+        elapsed_s=5.0,
+        retries=2,
+        input_tokens=500,
+        output_tokens=200,
+    )
     e = tracking._task_log[0]
     assert e["status"] == "✗"
     assert e["attempts"] == 2  # retries (not +1) when not ok
 
 
 def test_log_task_result_duration_format():
-    with patch("mlflow.log_metrics"):
-        log_task_result("roll_scenario", ok=True, elapsed_s=90.0, retries=0, step=1)
+    log_task_result("roll_scenario", ok=True, elapsed_s=90.0, retries=0)
     e = tracking._task_log[0]
     assert e["duration"] == "1m 30.0s"
 
 
 def test_log_task_result_cost_uses_model_pricing():
-    with patch("mlflow.log_metrics"):
-        log_task_result(
-            "t1",
-            ok=True,
-            elapsed_s=1.0,
-            retries=0,
-            step=0,
-            input_tokens=1_000_000,
-            output_tokens=0,
-            model="claude-opus-4-7",
-        )
-        log_task_result(
-            "t2",
-            ok=True,
-            elapsed_s=1.0,
-            retries=0,
-            step=0,
-            input_tokens=1_000_000,
-            output_tokens=0,
-            model="claude-haiku-4-5-20251001",
-        )
+    log_task_result(
+        "t1",
+        ok=True,
+        elapsed_s=1.0,
+        retries=0,
+        input_tokens=1_000_000,
+        output_tokens=0,
+        model="claude-opus-4-7",
+    )
+    log_task_result(
+        "t2",
+        ok=True,
+        elapsed_s=1.0,
+        retries=0,
+        input_tokens=1_000_000,
+        output_tokens=0,
+        model="claude-haiku-4-5-20251001",
+    )
     opus_cost = tracking._task_log[0]["cost"]
     haiku_cost = tracking._task_log[1]["cost"]
     assert opus_cost > haiku_cost
 
 
 def test_multiple_tasks_accumulate_in_log():
-    with patch("mlflow.log_metrics"):
-        for i in range(3):
-            log_task_result(f"task_{i}", ok=True, elapsed_s=1.0, retries=0, step=i)
+    for i in range(3):
+        log_task_result(f"task_{i}", ok=True, elapsed_s=1.0, retries=0)
     assert len(tracking._task_log) == 3
 
 

@@ -224,7 +224,7 @@ def test_generate_starter_pbip_valid(tmp_path, cfg):
     starter = tmp_path / "starter"
     for path, content in [
         ("Assessment.pbip", "{}"),
-        ("Assessment.SemanticModel/definition.pbism", "content"),
+        ("Assessment.SemanticModel/definition.pbism", '{"version": "4.0", "settings": {}}'),
         ("Assessment.SemanticModel/definition/model.tmdl", "content"),
         ("Assessment.Report/definition.pbir", "{}"),
         ("Assessment.Report/report.json", "{}"),

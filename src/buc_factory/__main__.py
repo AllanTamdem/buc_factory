@@ -27,7 +27,6 @@ from .tracking import (
     evaluate_outputs,
     log_config,
     log_output_artifacts,
-    log_run_summary,
     log_tasks_summary,
     reset_run,
     setup_mlflow,
@@ -111,14 +110,12 @@ def main() -> None:
         fmt_total = f"{int(m)}m {s:.1f}s"
 
         failed = bool(final_state.get("failed"))
-        tasks_completed = final_state.get("task_index", 0)
 
-        log_run_summary(total_s=total, failed=failed, tasks_completed=tasks_completed)
         log_tasks_summary(wall_clock_s=total)
         log_output_artifacts(output_dir)
 
         if not failed:
-            evaluate_outputs(output_dir, cfg)
+            evaluate_outputs(output_dir)
             LOGGER.info(f"\n✓ all sub-tasks complete — total {fmt_total}")
         else:
             mlflow.set_tag("failure_task", final_state.get("current_task", "unknown"))

@@ -68,8 +68,8 @@ def validate_and_extract(
             if len(entities) >= 2:
                 import pandas as pd
 
-                fact = pd.read_csv(csv_dir / f"{entities[0]}.csv")
-                dim = pd.read_csv(csv_dir / f"{entities[1]}.csv")
+                fact = pd.read_csv(csv_dir / f"{entities[0]}.csv", sep=None, engine="python")
+                dim = pd.read_csv(csv_dir / f"{entities[1]}.csv", sep=None, engine="python")
                 fk = next(
                     (c for c in fact.columns if entities[1].rstrip("s").lower() in c.lower()), None
                 )
@@ -106,11 +106,20 @@ def validate_and_extract(
             for r in required:
                 if not (starter / r).exists():
                     return False, f"missing {r}", {}
-                if r.endswith((".json", ".pbir", ".pbip")):
+                if r.endswith((".json", ".pbir", ".pbip", ".pbism")):
                     try:
                         json.loads((starter / r).read_text())
                     except json.JSONDecodeError as e:
                         return False, f"{r} invalid JSON: {e}", {}
+            pbism_path = starter / "Assessment.SemanticModel/definition.pbism"
+            if fmt == "PBIP" and pbism_path.exists():
+                pbism = json.loads(pbism_path.read_text())
+                if pbism.get("version") != "4.0":
+                    return (
+                        False,
+                        f"definition.pbism version must be '4.0', got '{pbism.get('version')}'",
+                        {},
+                    )
             return True, f"{fmt} starter OK", {}
 
         if name == "write_recruiter_solution":

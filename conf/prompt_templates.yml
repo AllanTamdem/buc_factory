@@ -187,7 +187,7 @@ tasks:
       Build under "starter/":
         - Assessment.pbip
         - Assessment.SemanticModel/.platform  (type "SemanticModel", version "2.0")
-        - Assessment.SemanticModel/definition.pbism
+        - Assessment.SemanticModel/definition.pbism  (content: {{"version": "4.0", "settings": {{}}}})
         - Assessment.SemanticModel/definition/model.tmdl, database.tmdl
         - Assessment.SemanticModel/definition/tables/<Entity>.tmdl  (one per entity,
           types declared, NO relationships, NO measures)

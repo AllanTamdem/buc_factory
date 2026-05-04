@@ -22,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Literal
 
+import mlflow.langchain
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command
@@ -98,6 +99,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
     ``AnthropicLLM`` instance. The compiled graph only needs a ``BucState``
     dict at invoke time.
     """
+    mlflow.langchain.autolog()
     schemas, dispatch = make_tools(output_dir)
     system_prompt = build_system(cfg)
     register_system_prompt(system_prompt)
@@ -108,6 +110,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
             s
             for s in schemas
             if (s["name"] != "run_python" or task_name in TASKS_WITH_RUN_PYTHON)
+            and (s["name"] != "validate_csv_integrity" or task_name in TASKS_WITH_RUN_PYTHON)
             and (s["name"] != "read_file" or task_name not in _TASKS_WITHOUT_READ_FILE)
         ]
 
@@ -116,6 +119,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
             k: v
             for k, v in dispatch.items()
             if (k != "run_python" or task_name in TASKS_WITH_RUN_PYTHON)
+            and (k != "validate_csv_integrity" or task_name in TASKS_WITH_RUN_PYTHON)
             and (k != "read_file" or task_name not in _TASKS_WITHOUT_READ_FILE)
         }
 
@@ -208,7 +212,6 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
                 ok=True,
                 elapsed_s=elapsed_s,
                 retries=state["retry_count"],
-                step=state["task_index"],
                 input_tokens=tok[0],
                 output_tokens=tok[1],
                 model=task_model,
@@ -242,7 +245,6 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
                 ok=False,
                 elapsed_s=elapsed_s,
                 retries=new_retry,
-                step=state["task_index"],
                 input_tokens=tok[0],
                 output_tokens=tok[1],
                 model=task_model,
@@ -358,7 +360,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
                 log_prompt(tok["prompt"], f"prompts/{task_name}.md")
 
         merged_extracted: dict = {}
-        for i, task_name in enumerate(task_names):
+        for task_name in task_names:
             ok, _, extracted, tok = results[task_name]
             _, task_model = _task_config(task_name)
             log_task_result(
@@ -366,7 +368,6 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
                 ok=ok,
                 elapsed_s=tok.get("elapsed", 0.0),
                 retries=tok.get("retries", 0),
-                step=state["task_index"] + i,
                 input_tokens=tok.get("input_tokens", 0),
                 output_tokens=tok.get("output_tokens", 0),
                 model=task_model,

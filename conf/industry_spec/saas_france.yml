@@ -1,0 +1,53 @@
+industry: "SaaS - Cloud Computing"
+company_context: "Un fournisseur européen de services cloud et SaaS (IaaS, PaaS, services managés), avec une base clients composée de PME, scale-ups et grands comptes. Modèle par abonnement mensuel et consommation à l'usage, avec forte exposition aux enjeux de churn, disponibilité des services et compétitivité prix face aux hyperscalers."
+language: "French"
+location: "Roubaix, France"
+role: "Data Analyst"
+seniority: "Junior"
+tool: "Power BI Desktop"
+duration_minutes: 60
+deliverable_format: PBIP
+
+dimensions:
+  angle:
+    - "Revenus récurrents (MRR, ARR, expansion vs contraction)"
+    - "Comportement de churn (volontaire vs involontaire, churn logo vs churn revenu)"
+    - "Adoption produit (usage des services, montée en gamme)"
+    - "Qualité de service et incidents (SLA, disponibilité, tickets support)"
+
+  gamme:
+    - "Hébergement mutualisé"
+    - "Serveurs dédiés"
+    - "Cloud public (compute, storage, network)"
+    - "Services managés (Kubernetes, bases de données, sauvegarde)"
+
+  historique_mois:
+    - "6"
+    - "12"
+    - "24"
+    - "36"
+
+  restitution:
+    - "Tableau de bord Exécutif (direction générale)"
+    - "Reporting Revenue Operations / Finance"
+    - "Dashboard churn & satisfaction client (Customer Success / Support)"
+
+  twist:
+    - "Hausse des coûts énergétiques impactant les marges"
+    - "Incident majeur sur un datacenter avec impact clients"
+    - "Migration accélérée des clients on-premise vers le cloud"
+    - "Lancement récent d'une offre cloud souverain"
+
+  volumetrie:
+    - "5k_clients"
+    - "50k_clients"
+    - "200k_clients"
+
+entities:
+  - "clients"
+  - "abonnements"
+  - "services"
+  - "facturation"
+  - "consommation"
+  - "tickets_support"
+  - "incidents"
