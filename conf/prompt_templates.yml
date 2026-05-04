@@ -91,8 +91,16 @@ tasks:
   write_brief: |
     Sub-task 3/8: Write the candidate brief.
 
-    Read scenario.json and bootstrap.json. Write the brief in {language}
-    to "brief/candidate_brief.md", 600-900 words, covering:
+    The scenario roll and domain bootstrap are pre-loaded below —
+    do NOT call read_file for scenario.json or bootstrap.json.
+
+    ## SCENARIO
+    {scenario_json}
+
+    ## BOOTSTRAP
+    {bootstrap_json}
+
+    Write the brief in {language} to "brief/candidate_brief.md", 600-900 words, covering:
       1. Business context (anchored in: {company_context})
       2. Mission: 3-5 KPIs (named, formula in natural language not code),
          2-4 required visualizations, 1 modeling requirement, 1 data quality
@@ -109,7 +117,12 @@ tasks:
   design_data_schema: |
     Sub-task 4/8: Design the data schema.
 
-    Read bootstrap.json for the entity list. Write "brief/data_schema.json":
+    The domain bootstrap is pre-loaded below — do NOT call read_file for bootstrap.json.
+
+    ## BOOTSTRAP
+    {bootstrap_json}
+
+    Write "brief/data_schema.json":
     {{
       "files": [
         {{"filename": "<entity>.csv", "columns": [
@@ -130,10 +143,16 @@ tasks:
   generate_data_script: |
     Sub-task 5/8: Generate the data script.
 
-    Step 1 — read brief/data_schema.json and brief/candidate_brief.md to understand
-    the schema, traps, and scenario context.
+    The data schema and candidate brief are pre-loaded below —
+    do NOT call read_file for data_schema.json or candidate_brief.md.
 
-    Step 2 — write ONE file only: "starter/generate_data.py". No probe or test scripts.
+    ## DATA SCHEMA
+    {data_schema_json}
+
+    ## CANDIDATE BRIEF
+    {candidate_brief}
+
+    Step 1 — write ONE file only: "starter/generate_data.py". No probe or test scripts.
     Script requirements:
       - First two lines after imports: random.seed(42) and np.random.seed(42)
       - Anchor output path with:
@@ -141,14 +160,16 @@ tasks:
             OUT_DIR = os.path.join(HERE, "data")
             os.makedirs(OUT_DIR, exist_ok=True)
         This guarantees CSVs land in starter/data/ regardless of working directory.
-      - Generate all entity CSVs (from the schema) into OUT_DIR — 300-800 rows each
+      - Generate EXACTLY the files listed under files[].filename in data_schema.json —
+        one CSV per entry, 300-800 rows each. No extra files, no dim_ / fact_ / staging
+        variants. The candidate will build the star schema themselves in {tool}.
       - Never read from disk at runtime; all data is generated programmatically
       - Guarantee referential integrity (every FK value resolves to a PK)
       - Faithfully inject every trap documented in the schema
 
-    Step 3 — run with run_python("starter/generate_data.py") and check stdout for errors.
+    Step 2 — run with run_python("starter/generate_data.py") and check stdout for errors.
 
-    Step 4 — verify FK integrity with validate_csv_integrity for the main
+    Step 3 — verify FK integrity with validate_csv_integrity for the main
     fact-to-dimension relationship.
 
     Only call mark_subtask_complete after validation passes.
@@ -157,10 +178,16 @@ tasks:
     power_bi: |
       Sub-task 6/8: Generate the Power BI starter (PBIP).
 
+      The data schema (entity names and column definitions) is pre-loaded below —
+      do NOT call read_file for data_schema.json.
+
+      ## DATA SCHEMA
+      {data_schema_json}
+
       Build under "starter/":
         - Assessment.pbip
         - Assessment.SemanticModel/.platform  (type "SemanticModel", version "2.0")
-        - Assessment.SemanticModel/definition.pbism
+        - Assessment.SemanticModel/definition.pbism  (content: {{"version": "4.0", "settings": {{}}}})
         - Assessment.SemanticModel/definition/model.tmdl, database.tmdl
         - Assessment.SemanticModel/definition/tables/<Entity>.tmdl  (one per entity,
           types declared, NO relationships, NO measures)
@@ -176,11 +203,18 @@ tasks:
 
       Tables connect to ../data/*.csv via Csv.Document with relative paths.
 
-      Validate every JSON file with validate_json before finishing.
+      Write ALL files first. Once every file is written, validate all JSON
+      files in a single batch (one validate_json call per JSON file, back to back).
       Then call mark_subtask_complete.
 
     tableau: |
       Sub-task 6/8: Generate the Tableau starter.
+
+      The data schema (entity names and column definitions) is pre-loaded below —
+      do NOT call read_file for data_schema.json.
+
+      ## DATA SCHEMA
+      {data_schema_json}
 
       Build under "starter/":
         - Assessment.tds (XML data source pointing to ../data/*.csv)
@@ -191,6 +225,12 @@ tasks:
 
     looker: |
       Sub-task 6/8: Generate the LookML starter.
+
+      The data schema (entity names and column definitions) is pre-loaded below —
+      do NOT call read_file for data_schema.json.
+
+      ## DATA SCHEMA
+      {data_schema_json}
 
       Build under "starter/":
         - models/assessment.model.lkml (one explore, connection placeholder)
@@ -225,20 +265,34 @@ tasks:
       7. 5 red flags + 5 strong signals
       8. 5 debrief interview questions
 
-    Reference scenario.json and data_schema.json so it matches the specific
-    roll. Then call mark_subtask_complete.
+    The candidate brief, scenario roll, and data schema are pre-loaded below —
+    do NOT call read_file for any of these files.
+    Your solution must address every requirement, question, and deliverable
+    stated in the candidate brief.
+
+    ## CANDIDATE BRIEF
+    {candidate_brief}
+
+    ## SCENARIO
+    {scenario_json}
+
+    ## DATA SCHEMA
+    {data_schema_json}
+
+    Then call mark_subtask_complete.
 
   final_assembly: |
     Sub-task 8/8: Final assembly check.
 
-    Use list_files to verify the project is complete. Expected layout:
+    Use list_files(".") to verify the project is complete. Expected layout:
       bootstrap.json, scenario.json
       brief/candidate_brief.md, brief/data_schema.json
       solution/recruiter_solution.md
       starter/generate_data.py, starter/data/*.csv
       starter/<tool-specific files for {tool}>
 
-    Fill any gaps. Then call mark_subtask_complete.
+    Do NOT write any new files. Only read and check.
+    Then call mark_subtask_complete.
 
 retry_suffix: |
   --- RETRY FEEDBACK ---

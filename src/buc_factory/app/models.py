@@ -57,7 +57,12 @@ class RunRequest(BaseModel):
                     ],
                 },
                 "entities": [
-                    "contrats", "clients", "versements", "rachats", "produits", "provisions"
+                    "contrats",
+                    "clients",
+                    "versements",
+                    "rachats",
+                    "produits",
+                    "provisions",
                 ],
             }
         }

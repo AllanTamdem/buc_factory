@@ -75,25 +75,34 @@ def _bootstrap_prompt(cfg: DomainConfig) -> str:
     )
 
 
-def _starter_prompt(cfg: DomainConfig) -> str:
+def _starter_prompt(cfg: DomainConfig, data_schema_json: str | None = None) -> str:
     p = _PROMPTS["tasks"]["generate_starter"]
     tool = cfg.tool.lower()
     deliverable_fmt = cfg.deliverable_format.upper()
+    schema = data_schema_json or "(not yet available)"
 
     if "power bi" in tool or deliverable_fmt == "PBIP":
-        return p["power_bi"]
+        return fmt(p["power_bi"], data_schema_json=schema)
     if "tableau" in tool or deliverable_fmt == "TWBX":
-        return p["tableau"]
+        return fmt(p["tableau"], data_schema_json=schema)
     if "looker" in tool or "lookml" in deliverable_fmt.lower():
-        return p["looker"]
+        return fmt(p["looker"], data_schema_json=schema)
     return fmt(p["generic"], tool=cfg.tool, deliverable_format=cfg.deliverable_format)
 
 
 def task_prompt(
-    name: str, cfg: DomainConfig, retry_feedback: str | None, rolled: dict | None = None
+    name: str,
+    cfg: DomainConfig,
+    retry_feedback: str | None,
+    rolled: dict | None = None,
+    scenario_json: str | None = None,
+    bootstrap_json: str | None = None,
+    data_schema_json: str | None = None,
+    candidate_brief: str | None = None,
 ) -> str:
     p = _PROMPTS["tasks"]
     ctx = vars(cfg)
+    _na = "(not yet available)"
     prompts = {
         "bootstrap_domain": _bootstrap_prompt(cfg),
         "roll_scenario": fmt(
@@ -102,15 +111,32 @@ def task_prompt(
         )
         if rolled
         else p["roll_scenario"],
-        "write_brief": fmt(p["write_brief"], **ctx),
-        "design_data_schema": fmt(p["design_data_schema"], **ctx),
-        "generate_data_script": p["generate_data_script"],
-        "generate_starter": _starter_prompt(cfg),
+        "write_brief": fmt(
+            p["write_brief"],
+            **ctx,
+            scenario_json=scenario_json or _na,
+            bootstrap_json=bootstrap_json or _na,
+        ),
+        "design_data_schema": fmt(
+            p["design_data_schema"],
+            **ctx,
+            bootstrap_json=bootstrap_json or _na,
+        ),
+        "generate_data_script": fmt(
+            p["generate_data_script"],
+            **ctx,
+            data_schema_json=data_schema_json or _na,
+            candidate_brief=candidate_brief or _na,
+        ),
+        "generate_starter": _starter_prompt(cfg, data_schema_json),
         "write_recruiter_solution": fmt(
             p["write_recruiter_solution"],
             **ctx,
             dax_or_calc=dax_or_calc(cfg.tool),
             prep_layer=_prep_layer(cfg.tool),
+            scenario_json=scenario_json or _na,
+            data_schema_json=data_schema_json or _na,
+            candidate_brief=candidate_brief or _na,
         ),
         "final_assembly": fmt(p["final_assembly"], **ctx),
     }
