@@ -162,17 +162,16 @@ ANTHROPIC_API_KEY=sk-ant-...
 ### CLI
 
 ```bash
-# New run
+# New run — outputs go to MLflow, no local directory kept
+uv run python -m buc_factory \
+  --config conf/industry_spec/p&c_insurance_france.yml
+
+# Persist outputs locally and allow resume (--output-dir is optional)
 uv run python -m buc_factory \
   --config conf/industry_spec/p&c_insurance_france.yml \
   --output-dir data/run_001
 
-# Different industry
-uv run python -m buc_factory \
-  --config conf/industry_spec/retail_usa.yml \
-  --output-dir data/run_002
-
-# Resume an interrupted run (same output-dir)
+# Resume an interrupted run (same --output-dir)
 uv run python -m buc_factory \
   --config conf/industry_spec/p&c_insurance_france.yml \
   --output-dir data/run_001
@@ -196,11 +195,11 @@ The server starts on `http://localhost:8000`. Interactive docs are available at 
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/runs` | List all runs with their status |
+| `GET` | `/runs` | List all runs from MLflow with status, parameters, and scenario |
 | `POST` | `/runs` | Submit a new agent run (returns `202` immediately) |
-| `GET` | `/runs/{run_id}` | Poll the status of a single run |
-| `GET` | `/runs/{run_id}/recruiter.zip` | Download `brief/` + `solution/` |
-| `GET` | `/runs/{run_id}/candidate.zip` | Download `brief/` + `starter/` (without `generate_data.py`) |
+| `GET` | `/runs/{run_id}` | Run details from MLflow: status, parameters, scenario |
+| `GET` | `/runs/{run_id}/recruiter.zip` | Download `brief/` + `solution/` (from MLflow artifacts) |
+| `GET` | `/runs/{run_id}/candidate.zip` | Download `brief/` + `starter/` (from MLflow artifacts, without `generate_data.py`) |
 
 #### Example: submit a run
 
@@ -279,7 +278,6 @@ docker run --env-file .env \
 docker run --env-file .env \
   -p 8000:8000 \
   -v $(pwd)/conf:/app/conf \
-  -v $(pwd)/data:/app/data \
   -v $(pwd)/log:/app/log \
   buc-factory \
   buc-factory-api

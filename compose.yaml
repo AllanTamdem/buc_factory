@@ -13,7 +13,6 @@ services:
       - "8000:8000"
     volumes:
       - ./conf:/app/conf
-      - ./data:/app/data
       - ./log:/app/log
     depends_on:
       mlflow:

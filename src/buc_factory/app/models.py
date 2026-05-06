@@ -84,9 +84,23 @@ class RunRequest(BaseModel):
 # ── outputs ────────────────────────────────────────────────────────
 
 
+class RunParameters(BaseModel):
+    industry: str | None = None
+    role: str | None = None
+    seniority: str | None = None
+    tool: str | None = None
+    language: str | None = None
+    location: str | None = None
+    duration_minutes: int | None = None
+    deliverable_format: str | None = None
+
+
 class RunSummary(BaseModel):
     run_id: str
     status: str
+    mlflow_run_id: str | None = None
+    parameters: RunParameters | None = None
+    scenario: dict | None = None
 
 
 class RunListResponse(BaseModel):

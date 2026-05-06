@@ -2,11 +2,12 @@
 FastAPI server for BUC Factory: run the agent and download assessment packages.
 
 Endpoints:
-    GET  /runs                         – list runs (on-disk + in-progress)
+    GET  /runs                         – list all runs from MLflow (params + scenario + status)
     POST /runs                         – submit a new agent run (async, 202)
-    GET  /runs/{run_id}                – status of a single run
-    GET  /runs/{run_id}/recruiter.zip  – brief/ + solution/
-    GET  /runs/{run_id}/candidate.zip  – brief/ + starter/ (minus generate_data.py)
+    GET  /runs/{run_id}                – run details from MLflow (params, scenario, status)
+    GET  /runs/{run_id}/recruiter.zip  – brief/ + solution/ (from MLflow artifacts)
+    GET  /runs/{run_id}/candidate.zip  – brief/ + starter/ (from MLflow artifacts,
+                                         minus generate_data.py)
 
 Usage:
     uvicorn buc_factory.app.api:app --reload
@@ -16,9 +17,10 @@ Usage:
 import io
 import json
 import logging
-import os
+import tempfile
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
@@ -39,11 +41,11 @@ from ..tracking import (
     reset_run,
     setup_mlflow,
 )
-from .models import RunListResponse, RunRequest, RunResponse, RunSummary
+from .models import RunListResponse, RunParameters, RunRequest, RunResponse, RunSummary
 
 load_dotenv()
 
-DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
+_EXPERIMENT = "buc-factory"
 
 Path("log").mkdir(exist_ok=True)
 logging.basicConfig(
@@ -53,16 +55,48 @@ logging.basicConfig(
 )
 LOGGER = logging.getLogger(__name__)
 
-_run_status: dict[str, str] = {}  # in-memory: run_id -> "queued"|"running"|"done"|"failed"
+_run_status: dict[str, str] = {}  # run_id -> "queued"|"running"|"done"|"failed"
+_mlflow_run_ids: dict[str, str] = {}  # run_id -> MLflow run UUID (populated once run starts)
+_run_counter = 0
 _id_lock = Lock()
+
+_MLFLOW_STATUS_MAP = {
+    "RUNNING": "running",
+    "FINISHED": "done",
+    "FAILED": "failed",
+    "KILLED": "failed",
+}
 
 
 # ── app lifecycle ──────────────────────────────────────────────────
 
 
+def _init_run_counter() -> None:
+    """Seed _run_counter from the highest api_run_id already registered in MLflow."""
+    global _run_counter
+    client = mlflow.MlflowClient()
+    experiment = client.get_experiment_by_name(_EXPERIMENT)
+    if experiment is None:
+        return
+    runs = client.search_runs(
+        experiment_ids=[experiment.experiment_id],
+        filter_string="tags.api_run_id != ''",
+        max_results=1000,
+    )
+    nums = [
+        int(r.data.tags["api_run_id"][4:])
+        for r in runs
+        if r.data.tags.get("api_run_id", "").startswith("run_")
+        and r.data.tags["api_run_id"][4:].isdigit()
+    ]
+    if nums:
+        _run_counter = max(nums)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):  # noqa: ARG001
     setup_mlflow()
+    _init_run_counter()
     yield
 
 
@@ -77,127 +111,176 @@ app = FastAPI(
 
 
 def _next_run_id() -> str:
-    """Atomically allocate the next run_NNN directory and return its name."""
+    global _run_counter
     with _id_lock:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        existing = [d.name for d in DATA_DIR.iterdir() if d.is_dir()]
-        nums = [int(n[4:]) for n in existing if n.startswith("run_") and n[4:].isdigit()]
-        run_id = f"run_{max(nums, default=0) + 1:03d}"
-        (DATA_DIR / run_id).mkdir()
-        return run_id
+        _run_counter += 1
+        return f"run_{_run_counter:03d}"
 
 
-def _resolve_run(run_id: str) -> Path:
-    path = (DATA_DIR / run_id).resolve()
-    if not path.is_relative_to(DATA_DIR.resolve()):
-        raise HTTPException(status_code=400, detail="Invalid run_id.")
-    if not path.is_dir():
-        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found.")
-    return path
+def _effective_status(run_id: str, mlflow_status: str | None) -> str:
+    """In-memory status is authoritative for the current session; MLflow is the fallback."""
+    if run_id in _run_status:
+        return _run_status[run_id]
+    return _MLFLOW_STATUS_MAP.get(mlflow_status or "", "unknown")
 
 
-def _disk_status(run_dir: Path) -> str:
-    state_file = run_dir / "state.json"
-    if not state_file.exists():
-        return "unknown"
+def _extract_parameters(run: Any) -> RunParameters:
+    p = run.data.params
+    return RunParameters(
+        industry=p.get("industry"),
+        role=p.get("role"),
+        seniority=p.get("seniority"),
+        tool=p.get("tool"),
+        language=p.get("language"),
+        location=p.get("location"),
+        duration_minutes=int(p["duration_minutes"]) if "duration_minutes" in p else None,
+        deliverable_format=p.get("deliverable_format"),
+    )
+
+
+def _fetch_scenario(mlflow_run_id: str) -> dict | None:
+    """Download and parse outputs/scenario.json from MLflow artifacts."""
     try:
-        state = json.loads(state_file.read_text())
-        idx = state.get("task_index", 0)
-        return "complete" if idx >= len(PLAN) else f"partial ({idx}/{len(PLAN)} tasks)"
-    except (json.JSONDecodeError, KeyError):
-        return "error"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            local = mlflow.artifacts.download_artifacts(
+                run_id=mlflow_run_id,
+                artifact_path="outputs/scenario.json",
+                dst_path=tmpdir,
+            )
+            return json.loads(Path(local).read_text())
+    except Exception:
+        return None
 
 
-def _build_zip(
-    run: Path,
+def _find_mlflow_run(run_id: str) -> Any | None:
+    """Return the MLflow Run for an api_run_id, or None."""
+    # Fast path: current session cached the UUID
+    mlflow_uuid = _mlflow_run_ids.get(run_id)
+    if mlflow_uuid:
+        try:
+            return mlflow.MlflowClient().get_run(mlflow_uuid)
+        except Exception:
+            pass
+
+    # Fallback: tag search (works across server restarts)
+    client = mlflow.MlflowClient()
+    experiment = client.get_experiment_by_name(_EXPERIMENT)
+    if experiment is None:
+        return None
+    runs = client.search_runs(
+        experiment_ids=[experiment.experiment_id],
+        filter_string=f"tags.api_run_id = '{run_id}'",
+        max_results=1,
+    )
+    return runs[0] if runs else None
+
+
+def _resolve_mlflow_run(run_id: str) -> str:
+    """Return the MLflow run UUID for artifact download, or raise an appropriate HTTP error."""
+    if _run_status.get(run_id) in ("queued", "running"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run '{run_id}' artifacts not yet available (status: {_run_status[run_id]}).",
+        )
+    mlflow_run = _find_mlflow_run(run_id)
+    if mlflow_run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found.")
+    return mlflow_run.info.run_id
+
+
+def _build_zip_from_mlflow(
+    mlflow_run_id: str,
     folders: list[tuple[str, str]],
     exclude: set[str] | None = None,
 ) -> io.BytesIO:
+    """Download the outputs artifact tree from MLflow and pack selected folders into a zip."""
     excluded = exclude or set()
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for subdir, prefix in folders:
-            src = run / subdir
-            if not src.is_dir():
-                continue
-            for file_path in sorted(src.rglob("*")):
-                if not file_path.is_file():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        local_path = mlflow.artifacts.download_artifacts(
+            run_id=mlflow_run_id,
+            artifact_path="outputs",
+            dst_path=tmpdir,
+        )
+        run_path = Path(local_path)
+        with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for subdir, prefix in folders:
+                src = run_path / subdir
+                if not src.is_dir():
                     continue
-                arc_name = prefix + "/" + file_path.relative_to(src).as_posix()
-                if arc_name in excluded:
-                    continue
-                zf.write(file_path, arc_name)
+                for file_path in sorted(src.rglob("*")):
+                    if not file_path.is_file():
+                        continue
+                    arc_name = prefix + "/" + file_path.relative_to(src).as_posix()
+                    if arc_name in excluded:
+                        continue
+                    zf.write(file_path, arc_name)
     buf.seek(0)
     return buf
 
 
 def _load_initial_state(output_dir: Path) -> BucState:
-    state_file = output_dir / "state.json"
-    saved: dict[str, Any] = {}
-    if state_file.exists():
-        saved = json.loads(state_file.read_text())
-        task_index = saved.get("task_index", 0)
-        if task_index >= len(PLAN):
-            raise ValueError("run already complete")
-        LOGGER.info(f"resuming from task [{PLAN[task_index]}] (index {task_index})")
-    else:
-        task_index = 0
-
     return BucState(
         messages=[],
         output_dir=str(output_dir),
-        task_index=task_index,
-        current_task=PLAN[task_index],
-        tasks_remaining=saved.get("tasks_remaining", PLAN[task_index:]),
+        task_index=0,
+        current_task=PLAN[0],
+        tasks_remaining=PLAN,
         retry_count=0,
-        bootstrapped_dimensions=saved.get("bootstrapped_dimensions"),
-        bootstrapped_entities=saved.get("bootstrapped_entities"),
-        scenario=saved.get("scenario"),
+        bootstrapped_dimensions=None,
+        bootstrapped_entities=None,
+        scenario=None,
         rolled=None,
         validation_error=None,
         failed=False,
     )
 
 
-def _execute_run(run_id: str, cfg: DomainConfig, output_dir: Path) -> None:
+def _execute_run(run_id: str, cfg: DomainConfig) -> None:
     """Full agent pipeline — runs synchronously in a background thread."""
+    mlflow.set_experiment(_EXPERIMENT)  # thread-local; must be set in each background thread
     _run_status[run_id] = "running"
     reset_run()
     run_name = f"{cfg.industry}__{cfg.role}".replace(" ", "_").lower()
     LOGGER.info(f"agent: industry={cfg.industry!r}, role={cfg.role!r}, tool={cfg.tool!r}")
-    LOGGER.info(f"  output: {output_dir}")
     try:
-        with mlflow.start_run(run_name=run_name):
-            log_config(cfg)
-            mlflow.set_tags(
-                {
-                    "output_dir": str(output_dir),
-                    "model": "claude-sonnet-4-6 (mixed)",
-                    "task_count": len(PLAN),
-                }
-            )
-            initial_state = _load_initial_state(output_dir)
-            graph = build_graph(output_dir, cfg)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            LOGGER.info(f"  temp output: {output_dir}")
+            with mlflow.start_run(run_name=run_name) as active_run:
+                _mlflow_run_ids[run_id] = active_run.info.run_id
+                log_config(cfg)
+                mlflow.set_tags(
+                    {
+                        "api_run_id": run_id,
+                        "model": "claude-sonnet-4-6 (mixed)",
+                        "task_count": len(PLAN),
+                    }
+                )
+                initial_state = _load_initial_state(output_dir)
+                graph = build_graph(output_dir, cfg)
 
-            t0 = time.perf_counter()
-            final_state: BucState = graph.invoke(initial_state)
-            total = time.perf_counter() - t0
+                t0 = time.perf_counter()
+                final_state: BucState = graph.invoke(initial_state)
+                total = time.perf_counter() - t0
 
-            m, s = divmod(total, 60)
-            fmt_total = f"{int(m)}m {s:.1f}s"
+                m, s = divmod(total, 60)
+                fmt_total = f"{int(m)}m {s:.1f}s"
 
-            failed = bool(final_state.get("failed"))
+                failed = bool(final_state.get("failed"))
 
-            log_tasks_summary(wall_clock_s=total)
-            log_output_artifacts(output_dir)
+                log_tasks_summary(wall_clock_s=total)
+                log_output_artifacts(output_dir)
 
-            if not failed:
-                evaluate_outputs(output_dir)
-                LOGGER.info(f"\n✓ [{run_id}] all sub-tasks complete — total {fmt_total}")
-            else:
-                mlflow.set_tag("failure_task", final_state.get("current_task", "unknown"))
-                LOGGER.error(f"\n✗ [{run_id}] agent failed after {fmt_total}")
+                if not failed:
+                    evaluate_outputs(output_dir)
+                    LOGGER.info(f"\n✓ [{run_id}] all sub-tasks complete — total {fmt_total}")
+                else:
+                    mlflow.set_tag("failure_task", final_state.get("current_task", "unknown"))
+                    LOGGER.error(f"\n✗ [{run_id}] agent failed after {fmt_total}")
 
+        if failed:
+            mlflow.MlflowClient().set_terminated(_mlflow_run_ids[run_id], status="FAILED")
         _run_status[run_id] = "failed" if failed else "done"
 
     except ValueError as exc:
@@ -213,16 +296,45 @@ def _execute_run(run_id: str, cfg: DomainConfig, output_dir: Path) -> None:
 
 @app.get("/runs", response_model=RunListResponse)
 def list_runs() -> RunListResponse:
-    """List all runs with their current status."""
-    if not DATA_DIR.is_dir():
-        return RunListResponse(runs=[])
+    """List all runs from MLflow with parameters and scenario, merged with in-memory status."""
+    client = mlflow.MlflowClient()
+    experiment = client.get_experiment_by_name(_EXPERIMENT)
+
+    mlflow_by_run_id: dict[str, Any] = {}
+    if experiment is not None:
+        for mlflow_run in client.search_runs(
+            experiment_ids=[experiment.experiment_id],
+            order_by=["attributes.start_time ASC"],
+            max_results=1000,
+        ):
+            api_run_id = mlflow_run.data.tags.get("api_run_id")
+            if api_run_id:
+                mlflow_by_run_id[api_run_id] = mlflow_run
+
+    # Include queued runs not yet registered in MLflow
+    all_run_ids = sorted(set(mlflow_by_run_id.keys()) | set(_run_status.keys()))
+
+    def _fetch_for(rid: str) -> tuple[str, dict | None]:
+        mlflow_run = mlflow_by_run_id.get(rid)
+        return rid, _fetch_scenario(mlflow_run.info.run_id) if mlflow_run else None
+
+    scenarios: dict[str, dict | None] = {}
+    if all_run_ids:
+        with ThreadPoolExecutor(max_workers=min(8, len(all_run_ids))) as pool:
+            scenarios = dict(pool.map(_fetch_for, all_run_ids))
 
     runs = []
-    for d in sorted(DATA_DIR.iterdir()):
-        if not d.is_dir():
-            continue
-        status = _run_status.get(d.name) or _disk_status(d)
-        runs.append(RunSummary(run_id=d.name, status=status))
+    for rid in all_run_ids:
+        mlflow_run = mlflow_by_run_id.get(rid)
+        runs.append(
+            RunSummary(
+                run_id=rid,
+                status=_effective_status(rid, mlflow_run.info.status if mlflow_run else None),
+                mlflow_run_id=mlflow_run.info.run_id if mlflow_run else None,
+                parameters=_extract_parameters(mlflow_run) if mlflow_run else None,
+                scenario=scenarios.get(rid),
+            )
+        )
 
     return RunListResponse(runs=runs)
 
@@ -231,26 +343,35 @@ def list_runs() -> RunListResponse:
 def create_run(request: RunRequest, background_tasks: BackgroundTasks) -> RunResponse:
     """Submit a new agent run. Returns immediately; agent executes in the background."""
     run_id = _next_run_id()
-    output_dir = DATA_DIR / run_id
     cfg = DomainConfig(**request.model_dump())
     _run_status[run_id] = "queued"
-    background_tasks.add_task(_execute_run, run_id, cfg, output_dir)
+    background_tasks.add_task(_execute_run, run_id, cfg)
     return RunResponse(run_id=run_id, status="queued")
 
 
-@app.get("/runs/{run_id}", response_model=RunResponse)
-def get_run(run_id: str) -> RunResponse:
-    """Return the current status of a single run."""
-    run = _resolve_run(run_id)
-    status = _run_status.get(run_id) or _disk_status(run)
-    return RunResponse(run_id=run_id, status=status)
+@app.get("/runs/{run_id}", response_model=RunSummary)
+def get_run(run_id: str) -> RunSummary:
+    """Return the current status and full details of a single run from MLflow."""
+    mlflow_run = _find_mlflow_run(run_id)
+    if mlflow_run is None and run_id not in _run_status:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found.")
+
+    scenario = _fetch_scenario(mlflow_run.info.run_id) if mlflow_run else None
+
+    return RunSummary(
+        run_id=run_id,
+        status=_effective_status(run_id, mlflow_run.info.status if mlflow_run else None),
+        mlflow_run_id=mlflow_run.info.run_id if mlflow_run else None,
+        parameters=_extract_parameters(mlflow_run) if mlflow_run else None,
+        scenario=scenario,
+    )
 
 
 @app.get("/runs/{run_id}/recruiter.zip")
 def download_recruiter(run_id: str) -> StreamingResponse:
-    """Download recruiter package: brief/ + solution/."""
-    run = _resolve_run(run_id)
-    buf = _build_zip(run, [("brief", "brief"), ("solution", "solution")])
+    """Download recruiter package: brief/ + solution/ (from MLflow artifacts)."""
+    mlflow_run_id = _resolve_mlflow_run(run_id)
+    buf = _build_zip_from_mlflow(mlflow_run_id, [("brief", "brief"), ("solution", "solution")])
     return StreamingResponse(
         buf,
         media_type="application/zip",
@@ -261,9 +382,9 @@ def download_recruiter(run_id: str) -> StreamingResponse:
 @app.get("/runs/{run_id}/candidate.zip")
 def download_candidate(run_id: str) -> StreamingResponse:
     """Download candidate package: brief/ + starter/ (without generate_data.py)."""
-    run = _resolve_run(run_id)
-    buf = _build_zip(
-        run,
+    mlflow_run_id = _resolve_mlflow_run(run_id)
+    buf = _build_zip_from_mlflow(
+        mlflow_run_id,
         [("brief", "brief"), ("starter", "starter")],
         exclude={"starter/generate_data.py"},
     )
