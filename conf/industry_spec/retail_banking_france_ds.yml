@@ -1,0 +1,45 @@
+# Retail banking, France — Data Scientist, fully specified.
+# Dimensions and entities pinned for deterministic scenario rolling.
+# Targets the python_ds starter (XGBoost + Keras scaffold).
+
+industry: "banque de détail"
+company_context: "Une banque de réseau française de taille régionale, implantée sur 200 agences avec une offre digitale en forte croissance. Clientèle composée de particuliers et de professionnels. Gamme couvrant les comptes courants, l'épargne, le crédit immobilier, le crédit à la consommation et les produits de prévoyance. Forte pression sur la rétention client depuis l'essor des néo-banques et la remontée des taux."
+location: "Lyon, France"
+language: "French"
+role: "Data Scientist"
+seniority: "Mid-Senior"
+tool: "Python (Jupyter)"
+duration_minutes: 120
+deliverable_format: "IPYNB"
+
+dimensions:
+  problematique:
+    - "Prédiction du churn client à 12 mois (classification binaire)"
+    - "Scoring d'appétence crédit immobilier (régression logistique / gradient boosting)"
+    - "Détection d'anomalies transactionnelles (isolation forest / autoencodeur)"
+    - "Segmentation comportementale de la clientèle (clustering non supervisé)"
+  angle:
+    - "Interprétabilité du modèle (SHAP values, feature importance)"
+    - "Optimisation du seuil de décision (coût métier du faux négatif vs faux positif)"
+    - "Gestion du déséquilibre de classes (SMOTE, class_weight)"
+    - "Validation temporelle (walk-forward, pas de data leakage)"
+  historique_mois: ["6", "12", "24", "36"]
+  volumetrie: ["50k_clients", "200k_clients", "1M_clients"]
+  twist:
+    - "Déséquilibre de classes important : churn réel < 5 % du portefeuille"
+    - "Variables RGPD à exclure du modèle (âge exact, commune de résidence fine)"
+    - "Concept drift : comportements post-COVID non représentatifs de la tendance actuelle"
+    - "Données manquantes structurelles sur 25-30 % des lignes (revenus déclarés)"
+    - "Récente fusion avec un réseau régional : hétérogénéité des référentiels"
+  restitution:
+    - "Note méthodologique pour l'équipe Conformité / Risques (auditabilité du modèle)"
+    - "Présentation au Chief Risk Officer (synthèse exécutive + métriques clés)"
+    - "Fiche technique pour intégration dans le pipeline MLflow de production"
+
+entities:
+  - "clients"
+  - "comptes"
+  - "transactions"
+  - "credits"
+  - "produits"
+  - "evenements_relation"

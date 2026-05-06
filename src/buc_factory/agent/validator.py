@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from .entity import DomainConfig
-from .prompting import dax_or_calc
+from .prompting import _is_python, calc_language
 
 MAX_RETRIES_PER_TASK = 3
 TASKS_WITH_RUN_PYTHON = {"generate_data_script"}
@@ -87,8 +87,9 @@ def validate_and_extract(
 
         if name == "generate_starter":
             starter = output_dir / "starter"
-            fmt = cfg.deliverable_format.upper()
-            if fmt == "PBIP":
+            deliverable_fmt = cfg.deliverable_format.upper()
+
+            if deliverable_fmt == "PBIP":
                 required = [
                     "Assessment.pbip",
                     "Assessment.SemanticModel/definition.pbism",
@@ -96,31 +97,47 @@ def validate_and_extract(
                     "Assessment.Report/definition.pbir",
                     "Assessment.Report/report.json",
                 ]
-            elif fmt == "TWBX":
-                required = ["Assessment.tds", "Assessment.twb"]
-            else:
-                files = list(starter.rglob("*")) if starter.exists() else []
-                if len(files) < 2:
-                    return False, "starter looks empty", {}
-                return True, f"{len(files)} files (generic check)", {}
-            for r in required:
-                if not (starter / r).exists():
-                    return False, f"missing {r}", {}
-                if r.endswith((".json", ".pbir", ".pbip", ".pbism")):
-                    try:
-                        json.loads((starter / r).read_text())
-                    except json.JSONDecodeError as e:
-                        return False, f"{r} invalid JSON: {e}", {}
-            pbism_path = starter / "Assessment.SemanticModel/definition.pbism"
-            if fmt == "PBIP" and pbism_path.exists():
-                pbism = json.loads(pbism_path.read_text())
-                if pbism.get("version") != "4.0":
-                    return (
-                        False,
-                        f"definition.pbism version must be '4.0', got '{pbism.get('version')}'",
-                        {},
-                    )
-            return True, f"{fmt} starter OK", {}
+                for r in required:
+                    if not (starter / r).exists():
+                        return False, f"missing {r}", {}
+                    if r.endswith((".json", ".pbir", ".pbip", ".pbism")):
+                        try:
+                            json.loads((starter / r).read_text())
+                        except json.JSONDecodeError as e:
+                            return False, f"{r} invalid JSON: {e}", {}
+                pbism_path = starter / "Assessment.SemanticModel/definition.pbism"
+                if pbism_path.exists():
+                    pbism = json.loads(pbism_path.read_text())
+                    if pbism.get("version") != "4.0":
+                        return (
+                            False,
+                            f"definition.pbism version must be '4.0', got '{pbism.get('version')}'",
+                            {},
+                        )
+                return True, "PBIP starter OK", {}
+
+            if _is_python(cfg.tool) or deliverable_fmt == "IPYNB":
+                nb_path = starter / "notebook.ipynb"
+                req_path = starter / "requirements.txt"
+                if not nb_path.exists():
+                    return False, "missing starter/notebook.ipynb", {}
+                if not req_path.exists():
+                    return False, "missing starter/requirements.txt", {}
+                try:
+                    nb = json.loads(nb_path.read_text())
+                except json.JSONDecodeError as e:
+                    return False, f"notebook.ipynb invalid JSON: {e}", {}
+                if nb.get("nbformat") != 4:
+                    return False, "notebook.ipynb must be nbformat 4", {}
+                cells = nb.get("cells", [])
+                if len(cells) < 5:
+                    return False, f"notebook too sparse ({len(cells)} cells)", {}
+                return True, f"Python IPYNB starter OK ({len(cells)} cells)", {}
+
+            files = list(starter.rglob("*")) if starter.exists() else []
+            if len(files) < 2:
+                return False, "starter looks empty", {}
+            return True, f"{len(files)} files (generic check)", {}
 
         if name == "write_recruiter_solution":
             f = output_dir / "solution/recruiter_solution.md"
@@ -129,7 +146,7 @@ def validate_and_extract(
             content = f.read_text()
             if len(content) < 3000:
                 return False, f"solution too short ({len(content)} chars)", {}
-            calc_kw = dax_or_calc(cfg.tool).split()[0]
+            calc_kw = calc_language(cfg.tool).split()[0]
             if calc_kw.lower() not in content.lower():
                 return False, f"solution missing {calc_kw} content", {}
             return True, "solution OK", {}

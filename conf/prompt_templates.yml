@@ -1,5 +1,5 @@
 system: |
-  You are a senior data/BI consultant building a recruitment
+  You are a senior data consultant and technical interviewer building a recruitment
   assessment for a {seniority} {role} candidate.
 
   Domain context:
@@ -162,7 +162,8 @@ tasks:
         This guarantees CSVs land in starter/data/ regardless of working directory.
       - Generate EXACTLY the files listed under files[].filename in data_schema.json —
         one CSV per entry, 300-800 rows each. No extra files, no dim_ / fact_ / staging
-        variants. The candidate will build the star schema themselves in {tool}.
+        variants. No pre-joined data model — the candidate must join and transform the
+        data themselves.
       - Never read from disk at runtime; all data is generated programmatically
       - Guarantee referential integrity (every FK value resolves to a PK)
       - Faithfully inject every trap documented in the schema
@@ -240,6 +241,230 @@ tasks:
 
       Then call mark_subtask_complete.
 
+    python_da: |
+      Sub-task 6/8: Generate the Python starter project (Data Analyst).
+
+      The data schema is pre-loaded below — do NOT call read_file for data_schema.json.
+
+      ## DATA SCHEMA
+      {data_schema_json}
+
+      Build under "starter/". Goal: the candidate opens the notebook and starts
+      analysing immediately — data loaded, imports ready, sections scaffolded.
+
+      Step 1 — Write "starter/requirements.txt" (one package per line, no pins):
+        pandas
+        numpy
+        matplotlib
+        seaborn
+        jupyter
+
+      Step 2 — Write "starter/notebook.ipynb" as a valid Jupyter notebook (nbformat 4).
+      Top-level JSON structure:
+        {{
+          "nbformat": 4, "nbformat_minor": 5,
+          "metadata": {{
+            "kernelspec": {{"display_name": "Python 3", "language": "python", "name": "python3"}},
+            "language_info": {{"name": "python"}}
+          }},
+          "cells": [ ... ]
+        }}
+
+      Code cell: {{"cell_type": "code", "execution_count": null, "metadata": {{}},
+        "outputs": [], "source": ["line1\n", "last_line"]}}
+      Markdown cell: {{"cell_type": "markdown", "metadata": {{}},
+        "source": ["# Title\n", "\nBody."]}}
+
+      Include these cells in order:
+
+      a) Markdown — Title and intro. Remind: "Launch from the `starter/` folder."
+
+      b) Code — Imports:
+           import pandas as pd
+           import numpy as np
+           import matplotlib.pyplot as plt
+           import seaborn as sns
+           import warnings
+           %matplotlib inline
+           warnings.filterwarnings('ignore')
+           pd.set_option('display.max_columns', None)
+           sns.set_theme(style='whitegrid')
+
+      c) Code — Load every entity as a DataFrame:
+           <entity_name> = pd.read_csv("data/<entity_filename>")
+         One line per entity (snake_case variable, no .csv extension).
+
+      d) Code — Quick preview loop:
+           for name, df in [("<entity1>", <var1>), ...]:
+               print("\n" + "="*60)
+               print(f"  {{name}}: {{df.shape[0]:,}} rows x {{df.shape[1]}} columns")
+               display(df.head(3))
+               print(df.dtypes.to_string())
+
+      e) Markdown — "## 1. Data Quality Check\n\n_Nulls, duplicates, type issues,
+         suspicious values._"
+
+      f) Code — Null counts and duplicate check for each DataFrame.
+
+      g) Markdown — "## 2. Data Preparation\n\n_Join tables, fix types, handle
+         the traps documented in the schema._"
+
+      h) Code — Empty: # your preparation code here
+
+      i) Markdown — "## 3. Analysis & KPIs\n\n_Compute each KPI from the brief.
+         Support every claim with code._"
+
+      j) Code — Empty: # your analysis code here
+
+      k) Markdown — "## 4. Visualizations\n\n_Required charts — title, labelled
+         axes, one-sentence interpretation each._"
+
+      l) Code — Empty: # your charts here
+
+      m) Markdown — "## 5. Open Question\n\n_Analytical answer (2-4 paragraphs +
+         supporting code)._"
+
+      n) Markdown — "## 6. Conclusion\n\n_Summary of findings and recommendations._"
+
+      Step 3 — Write "starter/README.md":
+        # Assessment — Setup & Launch
+        ## 1. Install
+        ```bash
+        pip install -r requirements.txt
+        ```
+        ## 2. Run
+        ```bash
+        cd starter && jupyter notebook notebook.ipynb
+        ```
+        Data files are in the `data/` folder.
+
+      Validate notebook.ipynb with validate_json. Then call mark_subtask_complete.
+
+    python_ds: |
+      Sub-task 6/8: Generate the Python starter project (Data Scientist).
+
+      The data schema is pre-loaded below — do NOT call read_file for data_schema.json.
+
+      ## DATA SCHEMA
+      {data_schema_json}
+
+      Build under "starter/". Goal: the candidate opens the notebook and starts
+      modelling immediately — data loaded, full ML stack imported, pipeline scaffolded.
+
+      Step 1 — Write "starter/requirements.txt" (one package per line, no pins):
+        pandas
+        numpy
+        matplotlib
+        seaborn
+        scikit-learn
+        xgboost
+        tensorflow
+        jupyter
+
+      Step 2 — Write "starter/notebook.ipynb" as a valid Jupyter notebook (nbformat 4).
+      Same top-level JSON structure as above.
+
+      Include these cells in order:
+
+      a) Markdown — Title and intro. Remind: "Launch from the `starter/` folder."
+
+      b) Code — Full ML stack imports:
+           import pandas as pd
+           import numpy as np
+           import matplotlib.pyplot as plt
+           import seaborn as sns
+           from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+           from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
+           from sklearn.pipeline import Pipeline
+           from sklearn.metrics import (
+               classification_report, confusion_matrix, roc_auc_score,
+               mean_squared_error, r2_score
+           )
+           import xgboost as xgb
+           import tensorflow as tf
+           from tensorflow import keras
+           from tensorflow.keras import layers
+           import warnings
+           %matplotlib inline
+           warnings.filterwarnings('ignore')
+           pd.set_option('display.max_columns', None)
+           sns.set_theme(style='whitegrid')
+           print(f"TF {{tf.__version__}}  |  XGB {{xgb.__version__}}")
+
+      c) Code — Load every entity as a DataFrame:
+           <entity_name> = pd.read_csv("data/<entity_filename>")
+         One line per entity (snake_case variable, no .csv extension).
+
+      d) Code — Quick preview loop:
+           for name, df in [("<entity1>", <var1>), ...]:
+               print("\n" + "="*60)
+               print(f"  {{name}}: {{df.shape[0]:,}} rows x {{df.shape[1]}} columns")
+               display(df.head(3))
+               print(df.dtypes.to_string())
+
+      e) Markdown — "## 1. Data Quality Check\n\n_Nulls, duplicates, class
+         imbalance, type issues, traps from the schema._"
+
+      f) Code — Null counts, duplicate check, value_counts for categoricals.
+
+      g) Markdown — "## 2. Feature Engineering\n\n_Transform, encode, create
+         features. Handle every trap from the schema._"
+
+      h) Code — Empty: # your feature engineering code here
+
+      i) Markdown — "## 3. Modelling\n\n_Define target, split data, build and
+         compare model(s). Justify every choice._"
+
+      j) Code — Scaffold to get started:
+           # --- define target & features ---
+           TARGET = "<target_column>"   # adjust to your brief
+           FEATURES = [c for c in df.columns if c != TARGET]
+
+           X_train, X_test, y_train, y_test = train_test_split(
+               df[FEATURES], df[TARGET], test_size=0.2, random_state=42, stratify=df[TARGET]
+           )
+
+           # --- XGBoost baseline ---
+           xgb_model = xgb.XGBClassifier(n_estimators=200, random_state=42, eval_metric='logloss')
+           # xgb_model.fit(X_train, y_train)
+
+           # --- Keras / TensorFlow model (optional) ---
+           # inputs = keras.Input(shape=(len(FEATURES),))
+           # x = layers.Dense(64, activation='relu')(inputs)
+           # x = layers.Dropout(0.3)(x)
+           # outputs = layers.Dense(1, activation='sigmoid')(x)
+           # nn_model = keras.Model(inputs, outputs)
+           # nn_model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['AUC'])
+
+      k) Markdown — "## 4. Evaluation\n\n_Metrics, confusion matrix, feature
+         importance. Explain what the numbers mean._"
+
+      l) Code — Empty: # your evaluation code here
+
+      m) Markdown — "## 5. Visualizations\n\n_Required charts — title, labelled
+         axes, one-sentence interpretation each._"
+
+      n) Code — Empty: # your charts here
+
+      o) Markdown — "## 6. Open Question\n\n_Analytical answer (2-4 paragraphs +
+         supporting code)._"
+
+      p) Markdown — "## 7. Conclusion\n\n_Summary, model limitations, next steps._"
+
+      Step 3 — Write "starter/README.md":
+        # Assessment — Setup & Launch
+        ## 1. Install
+        ```bash
+        pip install -r requirements.txt
+        ```
+        ## 2. Run
+        ```bash
+        cd starter && jupyter notebook notebook.ipynb
+        ```
+        Data files are in the `data/` folder.
+
+      Validate notebook.ipynb with validate_json. Then call mark_subtask_complete.
+
     generic: |
       Sub-task 6/8: Generate the starter for {tool}.
 
@@ -255,11 +480,11 @@ tasks:
     Sub-task 7/8: Write the recruiter solution.
 
     Write "solution/recruiter_solution.md" in {language}, covering:
-      1. Target data model (star schema, cardinalities, justifications)
-      2. Reference {dax_or_calc} code for all key measures with
-         comments and common pitfalls
-      3. Data prep steps ({prep_layer})
-      4. Page-by-page visualization plan
+      1. Target data model (entities, join keys, cardinalities, and rationale)
+      2. Reference {calc_language} code for all key measures / analyses,
+         with inline comments and common pitfalls to watch for
+      3. Data preparation pipeline ({prep_layer})
+      4. Visualization and analysis structure plan
       5. Model answer to the open analytical question (2-4 paragraphs)
       6. Detailed scoring rubric with observable tiers (Excellent/Good/Fair/Poor)
       7. 5 red flags + 5 strong signals

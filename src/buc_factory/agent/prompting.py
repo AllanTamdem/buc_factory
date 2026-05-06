@@ -26,14 +26,17 @@ def build_system(cfg: DomainConfig) -> str:
 # ──────────────────────────────────────────────────────────────────
 
 
-def dax_or_calc(tool: str) -> str:
+def _is_python(tool: str) -> bool:
+    t = tool.lower()
+    return "python" in t or "jupyter" in t or "notebook" in t
+
+
+def calc_language(tool: str) -> str:
     t = tool.lower()
     if "power bi" in t:
         return "DAX"
-    if "tableau" in t:
-        return "Tableau calculation"
-    if "looker" in t:
-        return "LookML measure"
+    if _is_python(tool):
+        return "Python (pandas / matplotlib / sklearn)"
     return "calculation"
 
 
@@ -41,10 +44,8 @@ def _prep_layer(tool: str) -> str:
     t = tool.lower()
     if "power bi" in t:
         return "Power Query M"
-    if "tableau" in t:
-        return "Tableau Prep / data source filters"
-    if "looker" in t:
-        return "PDT / derived tables"
+    if _is_python(tool):
+        return "pandas ETL / feature engineering pipeline"
     return "data preparation layer"
 
 
@@ -83,10 +84,9 @@ def _starter_prompt(cfg: DomainConfig, data_schema_json: str | None = None) -> s
 
     if "power bi" in tool or deliverable_fmt == "PBIP":
         return fmt(p["power_bi"], data_schema_json=schema)
-    if "tableau" in tool or deliverable_fmt == "TWBX":
-        return fmt(p["tableau"], data_schema_json=schema)
-    if "looker" in tool or "lookml" in deliverable_fmt.lower():
-        return fmt(p["looker"], data_schema_json=schema)
+    if _is_python(cfg.tool) or deliverable_fmt == "IPYNB":
+        key = "python_ds" if "scientist" in cfg.role.lower() else "python_da"
+        return fmt(p[key], data_schema_json=schema)
     return fmt(p["generic"], tool=cfg.tool, deliverable_format=cfg.deliverable_format)
 
 
@@ -132,7 +132,7 @@ def task_prompt(
         "write_recruiter_solution": fmt(
             p["write_recruiter_solution"],
             **ctx,
-            dax_or_calc=dax_or_calc(cfg.tool),
+            calc_language=calc_language(cfg.tool),
             prep_layer=_prep_layer(cfg.tool),
             scenario_json=scenario_json or _na,
             data_schema_json=data_schema_json or _na,
