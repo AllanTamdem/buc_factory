@@ -28,6 +28,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Command
 
 from ..llm.claudeai import AnthropicLLM
+from ..llm.gptai import OpenAILLM
 from ..tracking import log_prompt, log_task_result, register_system_prompt
 from .entity import PLAN, BucState, DomainConfig
 from .prompting import build_system, task_prompt
@@ -40,12 +41,15 @@ _DEFAULT_MAX_TOKENS = 8000
 _LARGE_MAX_TOKENS = 16000
 
 _TASK_MODEL: dict[str, str] = {
+    "bootstrap_domain": "claude-sonnet-4-6",
     "roll_scenario": "claude-haiku-4-5-20251001",
-    "final_assembly": "claude-haiku-4-5-20251001",
+    "write_brief": "claude-sonnet-4-6",
+    "design_data_schema": "gpt-5.3-chat-latest",
+    "generate_data_script": "o4-mini",
     "generate_starter": "claude-opus-4-7",
     "write_recruiter_solution": "claude-opus-4-7",
+    "final_assembly": "claude-haiku-4-5-20251001",
 }
-_DEFAULT_MODEL = "claude-sonnet-4-6"
 
 # Keys are the new_index values that trigger run_parallel_group (i.e. the PLAN index
 # of the first task in the group, reached after the preceding sequential task completes).
@@ -67,11 +71,13 @@ _TASKS_WITHOUT_READ_FILE: set[str] = {
 }
 
 
-def _task_config(task_name: str) -> tuple[int, str]:
-    """Return (max_tokens, model) for a task."""
+def _task_config(task_name: str) -> tuple[int, str, str]:
+    """Return (max_tokens, model, provider) for a task."""
     _large = {"write_recruiter_solution", "generate_data_script", "generate_starter"}
     max_tokens = _LARGE_MAX_TOKENS if task_name in _large else _DEFAULT_MAX_TOKENS
-    return max_tokens, _TASK_MODEL.get(task_name, _DEFAULT_MODEL)
+    model = _TASK_MODEL[task_name]
+    provider = "openai" if not model.startswith("claude") else "claude"
+    return max_tokens, model, provider
 
 
 def _save_progress(state: BucState, new_task_index: int, extra: dict) -> None:
@@ -101,9 +107,11 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
     """
     mlflow.langchain.autolog()
     schemas, dispatch = make_tools(output_dir)
-    system_prompt = build_system(cfg)
-    register_system_prompt(system_prompt)
-    llm = AnthropicLLM()
+    system_prompt_claude = build_system(cfg, provider="claude")
+    system_prompt_openai = build_system(cfg, provider="openai")
+    register_system_prompt(system_prompt_claude)
+    llm_claude = AnthropicLLM()
+    llm_openai = OpenAILLM()
 
     def _active_schemas(task_name: str) -> list[dict]:
         return [
@@ -124,10 +132,12 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
         }
 
     def _invoke(task_name: str, messages: list) -> tuple[list, int, int]:
-        max_tok, model = _task_config(task_name)
+        max_tok, model, provider = _task_config(task_name)
+        llm = llm_openai if provider == "openai" else llm_claude
+        system = system_prompt_openai if provider == "openai" else system_prompt_claude
         return llm.run_agent_loop(
             messages=messages,
-            system=system_prompt,
+            system=system,
             tools=_active_schemas(task_name),
             dispatch=_active_dispatch(task_name),
             max_tokens=max_tok,
@@ -143,13 +153,28 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
         m, s = divmod(seconds, 60)
         return f"{int(m)}m {s:.1f}s"
 
-    def prepare_task(state: BucState) -> Command[Literal["run_task"]]:
+    def prepare_task(state: BucState) -> Command[Literal["run_task", "validate_task"]]:
         _task_start[0] = time.perf_counter()
         task_name = PLAN[state["task_index"]]
         attempt = f"{state['retry_count'] + 1}/{MAX_RETRIES_PER_TASK}"
         LOGGER.info(f"\n━━━ [{task_name}] attempt {attempt} ━━━")
 
         update: dict = {"validation_error": None, "current_task": task_name}
+
+        # Fully-specified bootstrap: write bootstrap.json directly and skip the LLM.
+        # Calling the model just to echo back config values is wasteful.
+        if task_name == "bootstrap_domain" and cfg.dimensions and cfg.entities:
+            bootstrap = {
+                "dimensions": cfg.dimensions,
+                "entities": cfg.entities,
+                "rationale": "Fully specified via config.",
+            }
+            (Path(state["output_dir"]) / "bootstrap.json").write_text(
+                json.dumps(bootstrap, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            LOGGER.info("  bootstrap_domain: fully specified — skipped LLM")
+            update["messages"] = []
+            return Command(goto="validate_task", update=update)
 
         # Pre-roll scenario values in Python so randomness is independent of model
         # temperature. Only roll on the first attempt so retries use the same values.
@@ -174,6 +199,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
             if brief_path.exists():
                 _candidate_brief = brief_path.read_text(encoding="utf-8")
 
+        _, _, _provider = _task_config(task_name)
         prompt = task_prompt(
             task_name,
             cfg,
@@ -181,6 +207,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
             rolled=rolled,
             data_schema_json=_data_schema_json,
             candidate_brief=_candidate_brief,
+            provider=_provider,
         )
         log_prompt(prompt, f"prompts/{task_name}.md")
         update["messages"] = [HumanMessage(content=prompt)]
@@ -206,7 +233,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
             new_index = state["task_index"] + 1
             _save_progress(state, new_index, extracted)
             tok = _task_tokens.get(task_name, [0, 0])
-            _, task_model = _task_config(task_name)
+            _, task_model, _ = _task_config(task_name)
             log_task_result(
                 task_name,
                 ok=True,
@@ -239,7 +266,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
         goto = "fail_task" if new_retry >= MAX_RETRIES_PER_TASK else "prepare_task"
         if goto == "fail_task":
             tok = _task_tokens.get(task_name, [0, 0])
-            _, task_model = _task_config(task_name)
+            _, task_model, _ = _task_config(task_name)
             log_task_result(
                 task_name,
                 ok=False,
@@ -294,6 +321,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
                 if scenario_path.exists():
                     _scenario_json = scenario_path.read_text(encoding="utf-8")
 
+        _, _, _provider = _task_config(task_name)
         first_prompt: str | None = None
         for attempt in range(MAX_RETRIES_PER_TASK):
             prompt = task_prompt(
@@ -305,6 +333,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
                 bootstrap_json=_bootstrap_json,
                 data_schema_json=_data_schema_json,
                 candidate_brief=_candidate_brief,
+                provider=_provider,
             )
             if first_prompt is None:
                 first_prompt = prompt
@@ -362,7 +391,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
         merged_extracted: dict = {}
         for task_name in task_names:
             ok, _, extracted, tok = results[task_name]
-            _, task_model = _task_config(task_name)
+            _, task_model, _ = _task_config(task_name)
             log_task_result(
                 task_name,
                 ok=ok,

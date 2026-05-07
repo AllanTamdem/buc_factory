@@ -14,7 +14,9 @@ dependencies = [
     "fastapi>=0.115.0",
     "langchain>=1.2.15",
     "langchain-anthropic>=1.4.1",
+    "langchain-openai>=0.3.0",
     "langgraph>=1.0.0",
+    "openai>=1.0.0",
     "mlflow>=3.11.1",
     "uvicorn[standard]>=0.30.0",
 ]
@@ -24,6 +26,9 @@ buc-factory-api = "buc_factory.app.api:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"buc_factory" = ["conf/*.yml"]
 
 [dependency-groups]
 dev = [

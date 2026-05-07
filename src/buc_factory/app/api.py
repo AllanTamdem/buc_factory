@@ -253,7 +253,10 @@ def _execute_run(run_id: str, cfg: DomainConfig) -> None:
                 mlflow.set_tags(
                     {
                         "api_run_id": run_id,
-                        "model": "claude-sonnet-4-6 (mixed)",
+                        "model": (
+                            "claude-opus-4-7 / claude-sonnet-4-6"
+                            " / claude-haiku-4-5 / gpt-5.3 / o4-mini"
+                        ),
                         "task_count": len(PLAN),
                     }
                 )

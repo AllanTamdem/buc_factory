@@ -54,16 +54,16 @@ Two task pairs run concurrently via `ThreadPoolExecutor`:
 
 ### The eight sub-tasks (in order)
 
-| # | Task | What the model does | Validation |
-|---|------|---------------------|------------|
-| 1 | `bootstrap_domain` | Writes `bootstrap.json` with dimensions and entity list (inferred from industry or pinned from config) | Non-empty dimensions and ≥ 3 entities |
-| 2 | `roll_scenario` | Writes `scenario.json` with one value randomly sampled per dimension (rolled in Python, not by the model) | All dimension keys present |
-| 3 | `write_brief` | Writes `brief/candidate_brief.md` in the target language, 600-900 words, anchored to the rolled scenario | File exists, ≥ 1 500 chars |
-| 4 | `design_data_schema` | Writes `brief/data_schema.json` with column definitions, FK relationships, and 2-4 realistic data traps | ≥ 80% of entities covered, at least one trap declared |
-| 5 | `generate_data_script` | Writes `starter/generate_data.py` (schema pre-loaded in prompt), runs it, verifies FK integrity | All entity CSVs present, FK heuristic passes |
-| 6 | `generate_starter` | Builds the tool-specific starter project under `starter/` (PBIP, TWBX, or LookML; schema pre-loaded in prompt) | Required files present and valid JSON/XML |
-| 7 | `write_recruiter_solution` | Writes `solution/recruiter_solution.md` (brief, scenario, and schema pre-loaded in prompt) | File exists, ≥ 3 000 chars, contains DAX/calc keyword |
-| 8 | `final_assembly` | Checks all expected artifacts are present | All required paths exist |
+| # | Task | Model | What the model does | Validation |
+|---|------|-------|---------------------|------------|
+| 1 | `bootstrap_domain` | claude-sonnet-4-6 | Writes `bootstrap.json` with dimensions and entity list (inferred from industry or pinned from config) | Non-empty dimensions and ≥ 3 entities |
+| 2 | `roll_scenario` | claude-haiku-4-5 | Writes `scenario.json` with one value randomly sampled per dimension (rolled in Python, not by the model) | All dimension keys present |
+| 3 | `write_brief` | claude-sonnet-4-6 | Writes `brief/candidate_brief.md` in the target language, 600-900 words, anchored to the rolled scenario | File exists, ≥ 1 500 chars |
+| 4 | `design_data_schema` | gpt-5.3-chat-latest | Writes `brief/data_schema.json` with column definitions, FK relationships, and 2-4 realistic data traps | ≥ 80% of entities covered, at least one trap declared |
+| 5 | `generate_data_script` | o4-mini | Writes `starter/generate_data.py` (schema pre-loaded in prompt), runs it, verifies FK integrity | All entity CSVs present, FK heuristic passes |
+| 6 | `generate_starter` | claude-opus-4-7 | Builds the tool-specific starter project under `starter/` (PBIP or Python notebook; schema pre-loaded in prompt) | Required files present and valid JSON |
+| 7 | `write_recruiter_solution` | claude-opus-4-7 | Writes `solution/recruiter_solution.md` (brief, scenario, and schema pre-loaded in prompt) | File exists, ≥ 3 000 chars, contains DAX/calc keyword |
+| 8 | `final_assembly` | claude-haiku-4-5 | Checks all expected artifacts are present | All required paths exist |
 
 ### Retry logic
 
@@ -128,13 +128,12 @@ deliverable_format: "PBIP"
 | `deliverable_format` | Starter output |
 |----------------------|----------------|
 | `PBIP` | Power BI Desktop project (default) |
-| `TWBX` | Tableau workbook scaffold |
-| `LookML` | LookML model + views |
+| `IPYNB` | Python Jupyter notebook (DA or DS variant, selected by `role`) |
 | *(other)* | Generic file set |
 
 ### Prompt templates
 
-All system and task prompts live in `conf/prompt_templates.yml`. Edit them to change tone, constraints, or evaluation criteria without touching Python code.
+System and task prompts live in `src/buc_factory/conf/prompt_templates.yml`. Provider-specific overrides are applied via a deep-merge patch file: `src/buc_factory/conf/prompt_templates_openai_patch.yml` is merged on top for tasks routed to OpenAI. Edit the base file (or the patch) to change tone, constraints, or evaluation criteria without touching Python code.
 
 ---
 
@@ -153,6 +152,7 @@ cp .env.example .env   # add your ANTHROPIC_API_KEY
 `.env`:
 ```
 ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
 ```
 
 ---
@@ -304,7 +304,7 @@ docker compose run --rm buc_factory \
 
 Add `--build` on first run or after code changes: `docker compose up --build mlflow api -d`.
 
-All services inherit `ANTHROPIC_API_KEY` from `.env` and connect to MLflow over the internal Docker network (`http://mlflow:5000`).
+All services inherit `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` from `.env` and connect to MLflow over the internal Docker network (`http://mlflow:5000`).
 
 ---
 
@@ -313,10 +313,12 @@ All services inherit `ANTHROPIC_API_KEY` from `.env` and connect to MLflow over 
 ```
 buc_factory/
 ├── conf/
-│   ├── industry_spec/          # domain YAML configs (one per industry)
-│   └── prompt_templates.yml    # all system + task prompts
+│   └── industry_spec/                      # domain YAML configs (one per industry)
 │
 ├── src/buc_factory/
+│   ├── conf/
+│   │   ├── prompt_templates.yml                # base system + task prompts (Claude)
+│   │   └── prompt_templates_openai_patch.yml   # deep-merge overrides for OpenAI tasks
 │   ├── __main__.py             # CLI entry point, MLflow run, state loading, resume logic
 │   ├── tracking.py             # MLflow helpers: metrics, artifacts, prompt registry, LLM judge
 │   ├── app/
@@ -329,7 +331,9 @@ buc_factory/
 │   │   ├── tool.py             # make_tools() — write_file, read_file, list_files, run_python, ...
 │   │   └── validator.py        # validate_and_extract() — one validator per task
 │   └── llm/
-│       └── claudeai.py         # AnthropicLLM — ChatAnthropic wrapper with tool-use loop
+│       ├── base.py             # BaseLLM (ABC) — shared agentic loop, client cache
+│       ├── claudeai.py         # AnthropicLLM — ChatAnthropic + cache_control system message
+│       └── gptai.py            # OpenAILLM — ChatOpenAI + Anthropic→OpenAI tool schema adapter
 │
 ├── mlflow_data/
 │   ├── mlflow.db               # SQLite tracking backend (gitignored)
@@ -347,9 +351,9 @@ buc_factory/
 
 ## Key internals
 
-### `AnthropicLLM` (`llm/claudeai.py`)
+### LLM providers (`llm/`)
 
-Wraps `ChatAnthropic` with an agentic tool-use loop. Called once per task node:
+All task execution goes through `BaseLLM.run_agent_loop` — a shared agentic loop that invokes the model, dispatches tool calls, and repeats until the `mark_subtask_complete` tool fires or the step cap is reached:
 
 ```
 invoke model → dispatch tool calls → append results → repeat
@@ -357,6 +361,8 @@ until: no tool calls | done_tool fired | max_steps reached
 ```
 
 Returns `(list[BaseMessage], total_input_tokens, total_output_tokens)` — token counts are summed across every model call in the loop (including retries) and forwarded to MLflow.
+
+Each task is routed to a specific model by `_TASK_MODEL` in `graph.py`; the provider is derived from the model name (`startswith("claude")` → Anthropic, otherwise → OpenAI). `AnthropicLLM` passes tool schemas as-is (Anthropic format) and adds `cache_control` to the system message. `OpenAILLM` converts schemas to OpenAI function-calling format and skips `temperature` for o-series reasoning models.
 
 Token budgets by task:
 - Default tasks: 8 000 tokens
@@ -409,9 +415,9 @@ Every agent run is wrapped in an `mlflow.start_run()`. The following are recorde
 | Task prompts (last attempt per task) | Artifacts under `prompts/` |
 | System prompt | Prompt Registry (`buc-factory-system`) |
 | All output files from `--output-dir` | Artifacts under `outputs/` |
-| Solution relevancy score (1–10, Claude Haiku LLM judge) | Metric `solution_relevancy_score`; evaluation details in a nested child run |
+| Solution relevancy score (1–10, GPT-5.3 LLM judge) | Metric `solution_relevancy_score`; reasoning in tag `solution_relevancy_reasoning` |
 
-The judge prompt is registered in the Prompt Registry as `buc-factory-solution-relevancy-judge` with `PromptModelConfig` pointing to `claude-haiku-4-5-20251001`.
+The judge prompt is registered in the Prompt Registry as `buc-factory-solution-relevancy-judge` with `PromptModelConfig` pointing to `gpt-5.3-chat-latest`. Using a cross-provider judge (OpenAI evaluating Claude output) avoids self-leniency bias. The prompt is role-aware: it extracts requirements differently for Power BI / Python DA vs Python DS deliverables.
 
 ---
 
@@ -424,4 +430,4 @@ The judge prompt is registered in the Prompt Registry as `buc-factory-solution-r
 
 1. Add a case in `prompting._starter_prompt()` for the new format identifier.
 2. Add validation logic in `validator.validate_and_extract()` under `generate_starter`.
-3. Add a prompt block in `conf/prompt_templates.yml` under `tasks.generate_starter`.
+3. Add a prompt block in `src/buc_factory/conf/prompt_templates.yml` under `tasks.generate_starter`.
