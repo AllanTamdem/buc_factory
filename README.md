@@ -177,7 +177,7 @@ uv run python -m buc_factory \
   --output-dir data/run_001
 ```
 
-Logs are written to both the console and `log/agent.log`.
+Logs are written to both the console and `log/agent.log` (rotating, 10 MB per file, 5 backups).
 
 ---
 
@@ -190,6 +190,8 @@ uvicorn buc_factory.app.api:app --reload
 ```
 
 The server starts on `http://localhost:8000`. Interactive docs are available at **`http://localhost:8000/docs`**.
+
+Multiple runs can execute concurrently — each background thread keeps its own task log (via thread-local storage), so token counts and costs never bleed between requests. Every log line written during a run is tagged with `[run_id]` to make multi-run log files readable.
 
 #### Endpoints
 
@@ -343,8 +345,8 @@ buc_factory/
 │   └── claude_ai.ipynb         # standalone examples of AnthropicLLM usage
 │
 ├── data/                       # generated output dirs (gitignored)
-└── log/
-    └── agent.log               # run logs
+└── log/                        # gitignored
+    └── agent.log               # rotating run logs (10 MB / file, 5 backups); API logs tag each line with [run_id]
 ```
 
 ---
@@ -362,7 +364,19 @@ until: no tool calls | done_tool fired | max_steps reached
 
 Returns `(list[BaseMessage], total_input_tokens, total_output_tokens)` — token counts are summed across every model call in the loop (including retries) and forwarded to MLflow.
 
-Each task is routed to a specific model by `_TASK_MODEL` in `graph.py`; the provider is derived from the model name (`startswith("claude")` → Anthropic, otherwise → OpenAI). `AnthropicLLM` passes tool schemas as-is (Anthropic format) and adds `cache_control` to the system message. `OpenAILLM` converts schemas to OpenAI function-calling format and skips `temperature` for o-series reasoning models.
+Each task is routed to a specific model by `_TASK_MODEL` in `graph.py`; the provider is derived from the model name (`startswith("claude")` → Anthropic, otherwise → OpenAI). `AnthropicLLM` passes tool schemas as-is (Anthropic format) and adds `cache_control` to the system message. `OpenAILLM` converts schemas to OpenAI function-calling format and only passes `temperature` for GPT-4.x / GPT-3.x models (the sole OpenAI models that accept it).
+
+#### Automatic Anthropic → OpenAI fallback
+
+If a Claude call fails with an authentication or billing error (wrong/missing `ANTHROPIC_API_KEY`, quota exhausted), the agent automatically switches every subsequent Claude task to an OpenAI equivalent and continues without losing work:
+
+| Claude model | OpenAI fallback |
+|---|---|
+| `claude-haiku-4-5-20251001` | `gpt-5-mini` |
+| `claude-sonnet-4-6` | `gpt-5.4` |
+| `claude-opus-4-7` | `gpt-5.5` |
+
+`generate_starter` uses `gpt-5.3-codex` regardless of which Claude tier it replaces (per-task override). The actual model used is recorded per task in `task_summary.md` and in MLflow metrics, so cost estimates remain accurate even on a fallback run.
 
 Token budgets by task:
 - Default tasks: 8 000 tokens
@@ -411,7 +425,7 @@ Every agent run is wrapped in an `mlflow.start_run()`. The following are recorde
 | Domain config fields (`industry`, `role`, `tool`, …) | Run parameters |
 | Per-task success, duration, retries, input/output tokens | Run metrics (step = task index) |
 | Total input tokens, output tokens, estimated cost (USD) | Run metrics |
-| Task outcome table with per-task token counts and cost | Artifact `task_summary.md` |
+| Task outcome table with model, per-task token counts, and cost | Artifact `task_summary.md` |
 | Task prompts (last attempt per task) | Artifacts under `prompts/` |
 | System prompt | Prompt Registry (`buc-factory-system`) |
 | All output files from `--output-dir` | Artifacts under `outputs/` |

@@ -59,8 +59,8 @@ def test_token_cost_proportional():
 
 
 def test_openai_output_more_expensive_than_input():
-    # For every listed OpenAI model, output tokens cost more than input tokens
-    for model in ("gpt-5.3-chat-latest", "o4-mini"):
+    openai_models = [m for m in _MODEL_PRICING if not m.startswith("claude")]
+    for model in openai_models:
         in_price, out_price = _MODEL_PRICING[model]
         assert out_price > in_price, f"{model}: out_price should exceed in_price"
 
@@ -75,14 +75,14 @@ def test_claude_opus_more_expensive_than_haiku():
 
 
 def test_reset_run_clears_task_log():
-    tracking._task_log.append({"task": "dummy"})
+    tracking._get_task_log().append({"task": "dummy"})
     reset_run()
-    assert tracking._task_log == []
+    assert tracking._get_task_log() == []
 
 
 def test_reset_run_on_empty_log_is_safe():
     reset_run()
-    assert tracking._task_log == []
+    assert tracking._get_task_log() == []
 
 
 # ── log_task_result → _task_log ───────────────────────────────────
@@ -98,9 +98,10 @@ def test_log_task_result_success_appends_entry():
         output_tokens=500,
         model="claude-sonnet-4-6",
     )
-    assert len(tracking._task_log) == 1
-    e = tracking._task_log[0]
+    assert len(tracking._get_task_log()) == 1
+    e = tracking._get_task_log()[0]
     assert e["task"] == "write_brief"
+    assert e["model"] == "claude-sonnet-4-6"
     assert e["status"] == "✓"
     assert e["attempts"] == 1  # retries + 1 when ok
     assert e["input_tokens"] == 1000
@@ -118,7 +119,7 @@ def test_log_task_result_failure_appends_entry():
         output_tokens=200,
         model="claude-sonnet-4-6",
     )
-    e = tracking._task_log[0]
+    e = tracking._get_task_log()[0]
     assert e["status"] == "✗"
     assert e["attempts"] == 2  # retries (not +1) when not ok
 
@@ -127,7 +128,7 @@ def test_log_task_result_duration_format():
     log_task_result(
         "roll_scenario", ok=True, elapsed_s=90.0, retries=0, model="claude-haiku-4-5-20251001"
     )
-    e = tracking._task_log[0]
+    e = tracking._get_task_log()[0]
     assert e["duration"] == "1m 30.0s"
 
 
@@ -150,8 +151,8 @@ def test_log_task_result_cost_uses_model_pricing():
         output_tokens=0,
         model="claude-haiku-4-5-20251001",
     )
-    opus_cost = tracking._task_log[0]["cost"]
-    haiku_cost = tracking._task_log[1]["cost"]
+    opus_cost = tracking._get_task_log()[0]["cost"]
+    haiku_cost = tracking._get_task_log()[1]["cost"]
     assert opus_cost > haiku_cost
 
 
@@ -165,7 +166,7 @@ def test_log_task_result_openai_model_cost():
         output_tokens=0,
         model="gpt-5.3-chat-latest",
     )
-    assert tracking._task_log[0]["cost"] > 0
+    assert tracking._get_task_log()[0]["cost"] > 0
 
 
 def test_log_task_result_unknown_model_zero_cost():
@@ -178,13 +179,13 @@ def test_log_task_result_unknown_model_zero_cost():
         output_tokens=500,
         model="unknown-future-model",
     )
-    assert tracking._task_log[0]["cost"] == 0.0
+    assert tracking._get_task_log()[0]["cost"] == 0.0
 
 
 def test_multiple_tasks_accumulate_in_log():
     for i in range(3):
         log_task_result(f"task_{i}", ok=True, elapsed_s=1.0, retries=0, model="claude-sonnet-4-6")
-    assert len(tracking._task_log) == 3
+    assert len(tracking._get_task_log()) == 3
 
 
 # ── setup_mlflow does not call langchain autolog ──────────────────

@@ -13,6 +13,7 @@ Usage:
 import argparse
 import json
 import logging
+import logging.handlers
 import sys
 import tempfile
 import time
@@ -23,7 +24,7 @@ import mlflow
 from dotenv import load_dotenv
 
 from .agent.entity import PLAN, BucState, DomainConfig
-from .agent.graph import build_graph
+from .agent.graph import _CLAUDE_TO_OPENAI, _TASK_MODEL, _TASK_OPENAI_OVERRIDE, build_graph
 from .tracking import (
     evaluate_outputs,
     log_config,
@@ -33,11 +34,26 @@ from .tracking import (
     setup_mlflow,
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("log/agent.log"), logging.StreamHandler()],
+_MODEL_TAG = (
+    " / ".join(sorted(set(_TASK_MODEL.values())))
+    + " — fallback: "
+    + " / ".join(sorted(set(_CLAUDE_TO_OPENAI.values()) | set(_TASK_OPENAI_OVERRIDE.values())))
 )
+
+Path("log").mkdir(exist_ok=True)
+_fmt = logging.Formatter("%(asctime)s %(levelname)s - %(message)s")
+_handlers: list[logging.Handler] = [
+    logging.handlers.RotatingFileHandler(
+        "log/agent.log",
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    ),
+    logging.StreamHandler(),
+]
+for _h in _handlers:
+    _h.setFormatter(_fmt)
+logging.basicConfig(level=logging.INFO, handlers=_handlers)
 LOGGER = logging.getLogger(__name__)
 
 
@@ -98,7 +114,7 @@ def main() -> None:
 
         with mlflow.start_run(run_name=run_name):
             log_config(cfg)
-            mlflow.set_tags({"model": "claude-sonnet-4-6 (mixed)", "task_count": len(PLAN)})
+            mlflow.set_tags({"model": _MODEL_TAG, "task_count": len(PLAN)})
 
             reset_run()
             LOGGER.info(f"agent: industry={cfg.industry!r}, role={cfg.role!r}, tool={cfg.tool!r}")

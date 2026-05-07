@@ -17,7 +17,9 @@ Usage:
 import io
 import json
 import logging
+import logging.handlers
 import tempfile
+import threading
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -32,7 +34,12 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..agent.entity import PLAN, BucState, DomainConfig
-from ..agent.graph import build_graph
+from ..agent.graph import (
+    _CLAUDE_TO_OPENAI,
+    _TASK_MODEL,
+    _TASK_OPENAI_OVERRIDE,
+    build_graph,
+)
 from ..tracking import (
     evaluate_outputs,
     log_config,
@@ -46,13 +53,40 @@ from .models import RunListResponse, RunParameters, RunRequest, RunResponse, Run
 load_dotenv()
 
 _EXPERIMENT = "buc-factory"
+_MODEL_TAG = (
+    " / ".join(sorted(set(_TASK_MODEL.values())))
+    + " — fallback: "
+    + " / ".join(sorted(set(_CLAUDE_TO_OPENAI.values()) | set(_TASK_OPENAI_OVERRIDE.values())))
+)
+
+_log_tls = threading.local()
+
+
+class _RunIdFilter(logging.Filter):
+    """Injects the current run_id into every log record for this thread."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.run_id = getattr(_log_tls, "run_id", "-")
+        return True
+
 
 Path("log").mkdir(exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("log/agent.log"), logging.StreamHandler()],
-)
+_fmt = logging.Formatter("%(asctime)s [%(run_id)s] %(levelname)s - %(message)s")
+_run_filter = _RunIdFilter()
+_handlers: list[logging.Handler] = [
+    logging.handlers.RotatingFileHandler(
+        "log/agent.log",
+        maxBytes=10 * 1024 * 1024,  # 10 MB per file
+        backupCount=5,  # keep .1 … .5  →  ~50 MB total
+        encoding="utf-8",
+    ),
+    logging.StreamHandler(),
+]
+for _h in _handlers:
+    _h.setFormatter(_fmt)
+    _h.addFilter(_run_filter)
+logging.basicConfig(level=logging.INFO, handlers=_handlers)
+
 LOGGER = logging.getLogger(__name__)
 
 _run_status: dict[str, str] = {}  # run_id -> "queued"|"running"|"done"|"failed"
@@ -238,6 +272,14 @@ def _load_initial_state(output_dir: Path) -> BucState:
 
 def _execute_run(run_id: str, cfg: DomainConfig) -> None:
     """Full agent pipeline — runs synchronously in a background thread."""
+    _log_tls.run_id = run_id  # tag every log line from this thread with the run id
+    try:
+        _execute_run_inner(run_id, cfg)
+    finally:
+        _log_tls.run_id = "-"  # clear before thread returns to pool
+
+
+def _execute_run_inner(run_id: str, cfg: DomainConfig) -> None:
     mlflow.set_experiment(_EXPERIMENT)  # thread-local; must be set in each background thread
     _run_status[run_id] = "running"
     reset_run()
@@ -253,10 +295,7 @@ def _execute_run(run_id: str, cfg: DomainConfig) -> None:
                 mlflow.set_tags(
                     {
                         "api_run_id": run_id,
-                        "model": (
-                            "claude-opus-4-7 / claude-sonnet-4-6"
-                            " / claude-haiku-4-5 / gpt-5.3 / o4-mini"
-                        ),
+                        "model": _MODEL_TAG,
                         "task_count": len(PLAN),
                     }
                 )

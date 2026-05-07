@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import threading
 from pathlib import Path
 
 import mlflow
@@ -13,7 +14,17 @@ from .agent.entity import DomainConfig
 LOGGER = logging.getLogger(__name__)
 
 _EXPERIMENT = "buc-factory"
-_task_log: list[dict] = []  # accumulated per-task results, reset each run
+
+# Thread-local storage so concurrent API runs each accumulate their own task log
+# without interfering with each other.
+_tls = threading.local()
+
+
+def _get_task_log() -> list[dict]:
+    if not hasattr(_tls, "log"):
+        _tls.log = []
+    return _tls.log
+
 
 # Pricing in $ per 1M tokens (input, output)
 _MODEL_PRICING: dict[str, tuple[float, float]] = {
@@ -21,9 +32,15 @@ _MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-opus-4-7": (5.0, 25.0),
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-haiku-4-5-20251001": (1.0, 5.0),
-    # OpenAI
+    # OpenAI — primary
     "gpt-5.3-chat-latest": (1.75, 14.0),
+    "gpt-5.3-codex": (1.75, 14.0),
     "o4-mini": (1.10, 4.40),
+    # OpenAI — lighter/fallback
+    "gpt-5-mini": (0.25, 2.00),
+    # Frontier models
+    "gpt-5.4": (2.50, 15.00),
+    "gpt-5.5": (5.00, 30.00),
 }
 
 
@@ -60,12 +77,12 @@ def setup_mlflow(experiment_name: str = _EXPERIMENT) -> None:
 
     mlflow.set_experiment(experiment_name)
     _register_judge_prompt()
-    _task_log.clear()
+    _get_task_log().clear()
 
 
 def reset_run() -> None:
     """Clear per-run state. Must be called at the start of every agent run."""
-    _task_log.clear()
+    _get_task_log().clear()
 
 
 def log_config(cfg: DomainConfig) -> None:
@@ -96,9 +113,10 @@ def log_task_result(
 ) -> None:
     """Accumulate per-task outcome for the run summary table."""
     m, s = divmod(elapsed_s, 60)
-    _task_log.append(
+    _get_task_log().append(
         {
             "task": task_name,
+            "model": model,
             "attempts": retries + 1 if ok else retries,
             "status": "✓" if ok else "✗",
             "duration": f"{int(m)}m {s:.1f}s",
@@ -112,13 +130,13 @@ def log_task_result(
 
 def log_tasks_summary(wall_clock_s: float | None = None) -> None:
     """Write a markdown table of task outcomes as an MLflow artifact."""
-    if not _task_log:
+    if not _get_task_log():
         return
-    total_in = sum(e["input_tokens"] for e in _task_log)
-    total_out = sum(e["output_tokens"] for e in _task_log)
-    total_cost = sum(e["cost"] for e in _task_log)
+    total_in = sum(e["input_tokens"] for e in _get_task_log())
+    total_out = sum(e["output_tokens"] for e in _get_task_log())
+    total_cost = sum(e["cost"] for e in _get_task_log())
 
-    cpu_s = sum(e["elapsed_s"] for e in _task_log)
+    cpu_s = sum(e["elapsed_s"] for e in _get_task_log())
     cm, cs = divmod(cpu_s, 60)
     cpu_str = f"{int(cm)}m {cs:.1f}s"
 
@@ -130,17 +148,17 @@ def log_tasks_summary(wall_clock_s: float | None = None) -> None:
 
     lines = [
         "# Task Summary\n",
-        "| Task | Attempts | Status | Duration | Input tok | Output tok | Cost ($) |",
-        "|------|:--------:|:------:|:--------:|----------:|-----------:|---------:|",
+        "| Task | Model | Attempts | Status | Duration | Input tok | Output tok | Cost ($) |",
+        "|------|-------|:--------:|:------:|:--------:|----------:|-----------:|---------:|",
     ]
-    for e in _task_log:
+    for e in _get_task_log():
         lines.append(
-            f"| {e['task']} | {e['attempts']} | {e['status']} | {e['duration']} |"
+            f"| {e['task']} | {e['model']} | {e['attempts']} | {e['status']} | {e['duration']} |"
             f" {e['input_tokens']:,} | {e['output_tokens']:,} | ${e['cost']:.4f} |"
         )
     lines += [
-        "|------|:--------:|:------:|:--------:|----------:|-----------:|---------:|",
-        f"| **Total** | | | **{duration_cell}** |"
+        "|------|-------|:--------:|:------:|:--------:|----------:|-----------:|---------:|",
+        f"| **Total** | | | | **{duration_cell}** |"
         f" **{total_in:,}** | **{total_out:,}** | **${total_cost:.4f}** |",
     ]
     try:
