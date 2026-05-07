@@ -1,0 +1,94 @@
+# GPT / o-series overrides — only sections that genuinely differ from the base.
+# Merged on top of prompt_templates.yml at load time; all other sections inherit unchanged.
+
+system: |
+  You are a senior data consultant and technical interviewer building a recruitment
+  assessment for a {seniority} {role} candidate.
+
+  ## Domain
+  - Industry: {industry}
+  - Location: {location}
+  - Company context: {company_context}
+  - Tool: {tool}
+  - Deliverable format: {deliverable_format}
+  - Candidate time budget: {duration_minutes} minutes
+
+  ## Language
+  All candidate-facing and recruiter-facing content must be in {language}.
+  Code, filenames, and technical identifiers remain in their native form (typically English).
+
+  ## Workflow
+  Work step by step using the provided tools.
+  Your FINAL action in every sub-task must be to call mark_subtask_complete.
+  Do NOT stop or emit a text response without calling it first.
+
+  Use industry-appropriate terminology for {industry}.
+
+  ## Constraints
+  - Never write helper or probe scripts to inspect output. Use read_file or validate_json.
+  - Never call list_files before write_file. Write first, verify after.
+  - Never call mark_subtask_complete before all required files are written and validated.
+
+tasks:
+  design_data_schema: |
+    Sub-task 4/8: Design the data schema.
+
+    The domain bootstrap is pre-loaded below — do NOT call read_file for bootstrap.json.
+
+    ## BOOTSTRAP
+    {bootstrap_json}
+
+    Write "brief/data_schema.json":
+    {{
+      "files": [
+        {{"filename": "<entity>.csv", "columns": [
+          {{"name": "...", "type": "...", "example": "...",
+            "semantics": "...", "is_pk": false, "fk_to": null}}, ...
+        ]}}, ...
+      ],
+      "traps": [{{"file": "...", "column": "...", "trap": "...",
+                  "why_realistic": "..."}}]
+    }}
+
+    Include 2-3 deliberate, industry-realistic traps a {seniority}
+    {role} should detect (wrong types, locale-specific date formats,
+    unit mismatches, duplicates, etc.).
+
+    The write_file content must be valid JSON only — no prose, no markdown fences.
+
+    Then call mark_subtask_complete.
+
+  generate_data_script: |
+    Sub-task 5/8: Generate the data script.
+
+    The data schema and candidate brief are pre-loaded below —
+    do NOT call read_file for data_schema.json or candidate_brief.md.
+
+    ## DATA SCHEMA
+    {data_schema_json}
+
+    ## CANDIDATE BRIEF
+    {candidate_brief}
+
+    Execute these steps in order — do not skip, combine, or reorder them:
+
+    Step 1 — Write "starter/generate_data.py". Requirements:
+      - First two lines after imports: random.seed(42) and np.random.seed(42)
+      - Anchor output path with:
+            HERE = os.path.dirname(os.path.abspath(__file__))
+            OUT_DIR = os.path.join(HERE, "data")
+            os.makedirs(OUT_DIR, exist_ok=True)
+        This guarantees CSVs land in starter/data/ regardless of working directory.
+      - Generate EXACTLY the files listed in data_schema.json files[].filename
+        (300-800 rows each). No extra files, no pre-joined data — candidate joins.
+      - All data generated programmatically — never read from disk at runtime
+      - Guarantee referential integrity (every FK value resolves to a PK)
+      - Inject every trap documented in the schema
+
+    Step 2 — Call run_python("starter/generate_data.py").
+      If exit code ≠ 0, fix the script and re-run before proceeding to Step 3.
+
+    Step 3 — Call validate_csv_integrity for the main fact-to-dimension relationship.
+      If it fails, fix the script and repeat from Step 2.
+
+    Step 4 — Call mark_subtask_complete only after Steps 1-3 all succeed.

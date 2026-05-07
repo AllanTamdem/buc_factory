@@ -1,15 +1,43 @@
+import importlib.resources
 import json
-from pathlib import Path
 
 import yaml
 
 from ..utils import fmt
 from .entity import DomainConfig
 
-_PROJECT_DIR = Path(__file__).parent.parent.parent.parent
-_PROMPTS = yaml.safe_load(
-    (_PROJECT_DIR / "conf" / "prompt_templates.yml").read_text(encoding="utf-8")
-)
+_PROMPTS_CACHE: dict[str, dict] = {}
+
+
+def _load_yaml(fname: str) -> dict:
+    return yaml.safe_load(
+        importlib.resources.files("buc_factory")
+        .joinpath(f"conf/{fname}")
+        .read_text(encoding="utf-8")
+    )
+
+
+def _deep_merge(base: dict, patch: dict) -> dict:
+    result = dict(base)
+    for key, val in patch.items():
+        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+            result[key] = _deep_merge(result[key], val)
+        else:
+            result[key] = val
+    return result
+
+
+def _prompts(provider: str = "claude") -> dict:
+    if provider not in _PROMPTS_CACHE:
+        base = _load_yaml("prompt_templates.yml")
+        if provider != "claude":
+            try:
+                patch = _load_yaml(f"prompt_templates_{provider}_patch.yml")
+                base = _deep_merge(base, patch)
+            except Exception:
+                pass
+        _PROMPTS_CACHE[provider] = base
+    return _PROMPTS_CACHE[provider]
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -17,8 +45,8 @@ _PROMPTS = yaml.safe_load(
 # ──────────────────────────────────────────────────────────────────
 
 
-def build_system(cfg: DomainConfig) -> str:
-    return fmt(_PROMPTS["system"], **vars(cfg))
+def build_system(cfg: DomainConfig, provider: str = "claude") -> str:
+    return fmt(_prompts(provider)["system"], **vars(cfg))
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -26,14 +54,17 @@ def build_system(cfg: DomainConfig) -> str:
 # ──────────────────────────────────────────────────────────────────
 
 
-def dax_or_calc(tool: str) -> str:
+def _is_python(tool: str) -> bool:
+    t = tool.lower()
+    return "python" in t or "jupyter" in t or "notebook" in t
+
+
+def calc_language(tool: str) -> str:
     t = tool.lower()
     if "power bi" in t:
         return "DAX"
-    if "tableau" in t:
-        return "Tableau calculation"
-    if "looker" in t:
-        return "LookML measure"
+    if _is_python(tool):
+        return "Python (pandas / matplotlib / sklearn)"
     return "calculation"
 
 
@@ -41,52 +72,42 @@ def _prep_layer(tool: str) -> str:
     t = tool.lower()
     if "power bi" in t:
         return "Power Query M"
-    if "tableau" in t:
-        return "Tableau Prep / data source filters"
-    if "looker" in t:
-        return "PDT / derived tables"
+    if _is_python(tool):
+        return "pandas ETL / feature engineering pipeline"
     return "data preparation layer"
 
 
-def _bootstrap_prompt(cfg: DomainConfig) -> str:
-    p = _PROMPTS["tasks"]["bootstrap_domain"]
-    has_dims = cfg.dimensions is not None
-    has_entities = cfg.entities is not None
+def _bootstrap_prompt(cfg: DomainConfig, p: dict) -> str:
+    """Build the bootstrap_domain prompt for the infer (partial/no-config) path only.
 
-    if has_dims and has_entities:
-        return fmt(
-            p["fully_specified"],
-            dimensions_json=json.dumps(cfg.dimensions, ensure_ascii=False),
-            entities_json=json.dumps(cfg.entities, ensure_ascii=False),
-        )
-
+    The fully-specified path (both dimensions and entities set) bypasses the LLM
+    entirely in graph.py and never calls this function.
+    """
     parts = [p["infer_preamble"]]
-    if not has_dims:
+    if cfg.dimensions is None:
         parts.append(p["infer_dims_section"])
-    if not has_entities:
+    if cfg.entities is None:
         parts.append(p["infer_entities_section"])
     parts.append(p["infer_postamble"])
     return fmt(
         "\n\n".join(parts),
         industry=cfg.industry,
         location=cfg.location,
-        use_dims_note="Use the dimensions from config." if has_dims else "",
-        use_entities_note="Use the entities from config." if has_entities else "",
+        use_dims_note="Use the dimensions from config." if cfg.dimensions is not None else "",
+        use_entities_note="Use the entities from config." if cfg.entities is not None else "",
     )
 
 
-def _starter_prompt(cfg: DomainConfig, data_schema_json: str | None = None) -> str:
-    p = _PROMPTS["tasks"]["generate_starter"]
+def _starter_prompt(cfg: DomainConfig, p: dict, data_schema_json: str | None = None) -> str:
     tool = cfg.tool.lower()
     deliverable_fmt = cfg.deliverable_format.upper()
     schema = data_schema_json or "(not yet available)"
 
     if "power bi" in tool or deliverable_fmt == "PBIP":
         return fmt(p["power_bi"], data_schema_json=schema)
-    if "tableau" in tool or deliverable_fmt == "TWBX":
-        return fmt(p["tableau"], data_schema_json=schema)
-    if "looker" in tool or "lookml" in deliverable_fmt.lower():
-        return fmt(p["looker"], data_schema_json=schema)
+    if _is_python(cfg.tool) or deliverable_fmt == "IPYNB":
+        key = "python_ds" if "scientist" in cfg.role.lower() else "python_da"
+        return fmt(p[key], data_schema_json=schema)
     return fmt(p["generic"], tool=cfg.tool, deliverable_format=cfg.deliverable_format)
 
 
@@ -99,12 +120,14 @@ def task_prompt(
     bootstrap_json: str | None = None,
     data_schema_json: str | None = None,
     candidate_brief: str | None = None,
+    provider: str = "claude",
 ) -> str:
-    p = _PROMPTS["tasks"]
+    raw = _prompts(provider)
+    p = raw["tasks"]
     ctx = vars(cfg)
     _na = "(not yet available)"
     prompts = {
-        "bootstrap_domain": _bootstrap_prompt(cfg),
+        "bootstrap_domain": _bootstrap_prompt(cfg, p["bootstrap_domain"]),
         "roll_scenario": fmt(
             p["roll_scenario"],
             rolled_json=json.dumps(rolled, ensure_ascii=False, indent=2),
@@ -128,11 +151,11 @@ def task_prompt(
             data_schema_json=data_schema_json or _na,
             candidate_brief=candidate_brief or _na,
         ),
-        "generate_starter": _starter_prompt(cfg, data_schema_json),
+        "generate_starter": _starter_prompt(cfg, p["generate_starter"], data_schema_json),
         "write_recruiter_solution": fmt(
             p["write_recruiter_solution"],
             **ctx,
-            dax_or_calc=dax_or_calc(cfg.tool),
+            calc_language=calc_language(cfg.tool),
             prep_layer=_prep_layer(cfg.tool),
             scenario_json=scenario_json or _na,
             data_schema_json=data_schema_json or _na,
@@ -142,5 +165,5 @@ def task_prompt(
     }
     prompt = prompts[name]
     if retry_feedback:
-        prompt += "\n\n" + fmt(_PROMPTS["retry_suffix"], retry_feedback=retry_feedback)
+        prompt += "\n\n" + fmt(raw["retry_suffix"], retry_feedback=retry_feedback)
     return prompt

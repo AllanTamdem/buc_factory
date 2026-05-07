@@ -318,6 +318,133 @@ def test_generate_starter_generic_empty(tmp_path):
     assert "empty" in msg
 
 
+def _make_notebook(cells: list | None = None, nbformat: int = 4) -> dict:
+    return {
+        "nbformat": nbformat,
+        "nbformat_minor": 5,
+        "metadata": {"kernelspec": {"name": "python3"}},
+        "cells": cells
+        if cells is not None
+        else [
+            {
+                "cell_type": "code",
+                "source": ["pass"],
+                "metadata": {},
+                "outputs": [],
+                "execution_count": None,
+            }
+        ]
+        * 6,
+    }
+
+
+def test_generate_starter_ipynb_valid(tmp_path):
+    cfg = DomainConfig(
+        industry="test",
+        company_context="ctx",
+        location="Paris",
+        language="French",
+        role="Data Scientist",
+        seniority="Mid",
+        tool="Python (Jupyter)",
+        duration_minutes=90,
+        deliverable_format="IPYNB",
+    )
+    starter = tmp_path / "starter"
+    starter.mkdir()
+    (starter / "notebook.ipynb").write_text(json.dumps(_make_notebook()))
+    (starter / "requirements.txt").write_text("pandas\nnumpy\n")
+    ok, msg, _ = validate_and_extract("generate_starter", cfg, tmp_path, {})
+    assert ok
+    assert "IPYNB" in msg
+
+
+def test_generate_starter_ipynb_missing_notebook(tmp_path):
+    cfg = DomainConfig(
+        industry="test",
+        company_context="ctx",
+        location="Paris",
+        language="French",
+        role="Data Scientist",
+        seniority="Mid",
+        tool="Python",
+        duration_minutes=90,
+        deliverable_format="IPYNB",
+    )
+    (tmp_path / "starter").mkdir()
+    (tmp_path / "starter" / "requirements.txt").write_text("pandas\n")
+    ok, msg, _ = validate_and_extract("generate_starter", cfg, tmp_path, {})
+    assert not ok
+    assert "notebook.ipynb" in msg
+
+
+def test_generate_starter_ipynb_invalid_json(tmp_path):
+    cfg = DomainConfig(
+        industry="test",
+        company_context="ctx",
+        location="Paris",
+        language="French",
+        role="Data Scientist",
+        seniority="Mid",
+        tool="Python",
+        duration_minutes=90,
+        deliverable_format="IPYNB",
+    )
+    starter = tmp_path / "starter"
+    starter.mkdir()
+    (starter / "notebook.ipynb").write_text("{not valid json")
+    (starter / "requirements.txt").write_text("pandas\n")
+    ok, msg, _ = validate_and_extract("generate_starter", cfg, tmp_path, {})
+    assert not ok
+    assert "JSON" in msg
+
+
+def test_generate_starter_ipynb_wrong_format(tmp_path):
+    cfg = DomainConfig(
+        industry="test",
+        company_context="ctx",
+        location="Paris",
+        language="French",
+        role="Data Scientist",
+        seniority="Mid",
+        tool="Python",
+        duration_minutes=90,
+        deliverable_format="IPYNB",
+    )
+    starter = tmp_path / "starter"
+    starter.mkdir()
+    (starter / "notebook.ipynb").write_text(json.dumps(_make_notebook(nbformat=3)))
+    (starter / "requirements.txt").write_text("pandas\n")
+    ok, msg, _ = validate_and_extract("generate_starter", cfg, tmp_path, {})
+    assert not ok
+    assert "nbformat" in msg
+
+
+def test_generate_starter_ipynb_too_few_cells(tmp_path):
+    cfg = DomainConfig(
+        industry="test",
+        company_context="ctx",
+        location="Paris",
+        language="French",
+        role="Data Scientist",
+        seniority="Mid",
+        tool="Python",
+        duration_minutes=90,
+        deliverable_format="IPYNB",
+    )
+    starter = tmp_path / "starter"
+    starter.mkdir()
+    (starter / "notebook.ipynb").write_text(
+        json.dumps(
+            _make_notebook(cells=[{"cell_type": "markdown", "source": ["hi"], "metadata": {}}] * 2)
+        )
+    )
+    (starter / "requirements.txt").write_text("pandas\n")
+    ok, msg, _ = validate_and_extract("generate_starter", cfg, tmp_path, {})
+    assert not ok
+    assert "sparse" in msg
+
+
 # ── write_recruiter_solution ──────────────────────────────────────
 
 
@@ -344,20 +471,21 @@ def test_write_recruiter_solution_missing_keyword(tmp_path, cfg):
     assert "DAX" in msg or "missing" in msg
 
 
-def test_write_recruiter_solution_tableau_keyword(tmp_path):
+def test_write_recruiter_solution_python_keyword(tmp_path):
     cfg = DomainConfig(
         industry="test",
         company_context="ctx",
         location="Paris",
         language="French",
-        role="Analyst",
+        role="Data Scientist",
         seniority="Mid",
-        tool="Tableau Desktop",
-        duration_minutes=60,
+        tool="Python (Jupyter)",
+        duration_minutes=90,
+        deliverable_format="IPYNB",
     )
     (tmp_path / "solution").mkdir()
     (tmp_path / "solution" / "recruiter_solution.md").write_text(
-        "Tableau calculation example\n" + "x" * 3000
+        "Python pandas solution\n" + "x" * 3000
     )
     ok, _, _ = validate_and_extract("write_recruiter_solution", cfg, tmp_path, {})
     assert ok

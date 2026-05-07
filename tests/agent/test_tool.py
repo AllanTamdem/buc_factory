@@ -1,5 +1,3 @@
-import json
-
 import pytest
 
 from buc_factory.agent.tool import make_tools
@@ -145,10 +143,9 @@ def test_validate_csv_integrity_clean(tools):
     dispatch, base = tools
     (base / "facts.csv").write_text("id,cat_id\n1,10\n2,11\n")
     (base / "dims.csv").write_text("cat_id,name\n10,A\n11,B\n")
-    spec = json.dumps(
-        {"facts": "facts.csv", "fact_fk": "cat_id", "dim": "dims.csv", "dim_pk": "cat_id"}
+    result = dispatch["validate_csv_integrity"](
+        facts="facts.csv", fact_fk="cat_id", dim="dims.csv", dim_pk="cat_id"
     )
-    result = dispatch["validate_csv_integrity"](spec)
     assert result.startswith("OK")
 
 
@@ -157,10 +154,9 @@ def test_validate_csv_integrity_orphans(tools):
     dispatch, base = tools
     (base / "facts.csv").write_text("id,cat_id\n1,10\n2,99\n")  # 99 is orphan
     (base / "dims.csv").write_text("cat_id,name\n10,A\n11,B\n")
-    spec = json.dumps(
-        {"facts": "facts.csv", "fact_fk": "cat_id", "dim": "dims.csv", "dim_pk": "cat_id"}
+    result = dispatch["validate_csv_integrity"](
+        facts="facts.csv", fact_fk="cat_id", dim="dims.csv", dim_pk="cat_id"
     )
-    result = dispatch["validate_csv_integrity"](spec)
     assert result.startswith("FAIL")
 
 

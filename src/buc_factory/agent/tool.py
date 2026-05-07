@@ -61,17 +61,28 @@ def make_tools(output_dir: Path) -> tuple[list[dict], dict[str, Callable]]:
         except subprocess.TimeoutExpired:
             return "ERROR: script timed out after 60s"
 
-    def validate_csv_integrity(spec_json: str) -> str:
+    def validate_csv_integrity(facts: str, fact_fk: str, dim: str, dim_pk: str) -> str:
         try:
             import pandas as pd
 
-            spec = json.loads(spec_json)
-            fact = pd.read_csv(output_dir / spec["facts"], sep=None, engine="python")
-            dim = pd.read_csv(output_dir / spec["dim"], sep=None, engine="python")
-            orphans = set(fact[spec["fact_fk"]]) - set(dim[spec["dim_pk"]])
+            fact_df = pd.read_csv(output_dir / facts, sep=None, engine="python")
+            dim_df = pd.read_csv(output_dir / dim, sep=None, engine="python")
+
+            if fact_fk not in fact_df.columns:
+                return (
+                    f"ERROR: column '{fact_fk}' not found in {facts}. "
+                    f"Available: {list(fact_df.columns)}"
+                )
+            if dim_pk not in dim_df.columns:
+                return (
+                    f"ERROR: column '{dim_pk}' not found in {dim}. "
+                    f"Available: {list(dim_df.columns)}"
+                )
+
+            orphans = set(fact_df[fact_fk]) - set(dim_df[dim_pk])
             if orphans:
                 return f"FAIL: {len(orphans)} orphan FK values, sample: {list(orphans)[:5]}"
-            return f"OK: {len(fact)} fact rows, all FKs resolve in {len(dim)} dim rows"
+            return f"OK: {len(fact_df)} fact rows, all FKs resolve in {len(dim_df)} dim rows"
         except Exception as e:
             return f"ERROR: {type(e).__name__}: {e}"
 
@@ -144,9 +155,26 @@ def make_tools(output_dir: Path) -> tuple[list[dict], dict[str, Callable]]:
         ),
         _tool(
             "validate_csv_integrity",
-            "Check FK integrity. Pass JSON: {facts, fact_fk, dim, dim_pk}.",
-            {"spec_json": {"type": "string"}},
-            ["spec_json"],
+            "Check FK integrity between a fact CSV and a dimension CSV.",
+            {
+                "facts": {
+                    "type": "string",
+                    "description": "Relative path to the fact CSV, e.g. 'data/orders.csv'",
+                },
+                "fact_fk": {
+                    "type": "string",
+                    "description": "FK column name in the fact table",
+                },
+                "dim": {
+                    "type": "string",
+                    "description": "Relative path to the dimension CSV, e.g. 'data/customers.csv'",
+                },
+                "dim_pk": {
+                    "type": "string",
+                    "description": "PK column name in the dimension table",
+                },
+            },
+            ["facts", "fact_fk", "dim", "dim_pk"],
         ),
         _tool(
             "validate_json",

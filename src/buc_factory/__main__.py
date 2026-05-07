@@ -6,23 +6,25 @@ recruiter solution) for any industry, defined via a DomainConfig YAML file.
 
 Usage:
     export ANTHROPIC_API_KEY=...
-    python -m buc_factory --config conf/p&c_insurance_france.yml --output-dir ./run_001
-    python -m buc_factory --config conf/retail_usa.yml --output-dir ./run_002
-    python -m buc_factory --config conf/p&c_insurance_france.yml --output-dir ./run_001  # resumes
+    python -m buc_factory --config conf/p&c_insurance_france.yml
+    python -m buc_factory --config conf/p&c_insurance_france.yml --output-dir ./run_001  # resume
 """
 
 import argparse
 import json
 import logging
+import logging.handlers
 import sys
+import tempfile
 import time
+from contextlib import ExitStack
 from pathlib import Path
 
 import mlflow
 from dotenv import load_dotenv
 
 from .agent.entity import PLAN, BucState, DomainConfig
-from .agent.graph import build_graph
+from .agent.graph import _CLAUDE_TO_OPENAI, _TASK_MODEL, _TASK_OPENAI_OVERRIDE, build_graph
 from .tracking import (
     evaluate_outputs,
     log_config,
@@ -32,11 +34,26 @@ from .tracking import (
     setup_mlflow,
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("log/agent.log"), logging.StreamHandler()],
+_MODEL_TAG = (
+    " / ".join(sorted(set(_TASK_MODEL.values())))
+    + " — fallback: "
+    + " / ".join(sorted(set(_CLAUDE_TO_OPENAI.values()) | set(_TASK_OPENAI_OVERRIDE.values())))
 )
+
+Path("log").mkdir(exist_ok=True)
+_fmt = logging.Formatter("%(asctime)s %(levelname)s - %(message)s")
+_handlers: list[logging.Handler] = [
+    logging.handlers.RotatingFileHandler(
+        "log/agent.log",
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    ),
+    logging.StreamHandler(),
+]
+for _h in _handlers:
+    _h.setFormatter(_fmt)
+logging.basicConfig(level=logging.INFO, handlers=_handlers)
 LOGGER = logging.getLogger(__name__)
 
 
@@ -75,52 +92,59 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Generate a BI recruitment assessment package.")
     parser.add_argument("--config", required=True, type=Path, help="Path to domain YAML config.")
-    parser.add_argument("--output-dir", required=True, type=Path, help="Directory for outputs.")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Directory for outputs. Omit to use a temp dir (no resume).",
+    )
     args = parser.parse_args()
 
     cfg = DomainConfig.from_yaml(args.config)
-    output_dir: Path = args.output_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     setup_mlflow()
     run_name = f"{cfg.industry}__{cfg.role}".replace(" ", "_").lower()
 
-    with mlflow.start_run(run_name=run_name):
-        log_config(cfg)
-        mlflow.set_tags(
-            {
-                "output_dir": str(output_dir),
-                "model": "claude-sonnet-4-6 (mixed)",
-                "task_count": len(PLAN),
-            }
-        )
-
-        reset_run()
-        LOGGER.info(f"agent: industry={cfg.industry!r}, role={cfg.role!r}, tool={cfg.tool!r}")
-        LOGGER.info(f"  output: {output_dir}")
-
-        initial_state = _load_initial_state(output_dir)
-        graph = build_graph(output_dir, cfg)
-
-        t0 = time.perf_counter()
-        final_state: BucState = graph.invoke(initial_state)
-        total = time.perf_counter() - t0
-
-        m, s = divmod(total, 60)
-        fmt_total = f"{int(m)}m {s:.1f}s"
-
-        failed = bool(final_state.get("failed"))
-
-        log_tasks_summary(wall_clock_s=total)
-        log_output_artifacts(output_dir)
-
-        if not failed:
-            evaluate_outputs(output_dir)
-            LOGGER.info(f"\n✓ all sub-tasks complete — total {fmt_total}")
+    with ExitStack() as stack:
+        if args.output_dir is not None:
+            output_dir: Path = args.output_dir
+            output_dir.mkdir(parents=True, exist_ok=True)
         else:
-            mlflow.set_tag("failure_task", final_state.get("current_task", "unknown"))
-            LOGGER.error(f"\n✗ agent failed after {fmt_total}")
-            sys.exit(1)
+            output_dir = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+
+        with mlflow.start_run(run_name=run_name):
+            log_config(cfg)
+            mlflow.set_tags({"model": _MODEL_TAG, "task_count": len(PLAN)})
+
+            reset_run()
+            LOGGER.info(f"agent: industry={cfg.industry!r}, role={cfg.role!r}, tool={cfg.tool!r}")
+            LOGGER.info(f"  output: {output_dir}")
+
+            initial_state = _load_initial_state(output_dir)
+            graph = build_graph(output_dir, cfg)
+
+            t0 = time.perf_counter()
+            final_state: BucState = graph.invoke(initial_state)
+            total = time.perf_counter() - t0
+
+            m, s = divmod(total, 60)
+            fmt_total = f"{int(m)}m {s:.1f}s"
+
+            failed = bool(final_state.get("failed"))
+
+            log_tasks_summary(wall_clock_s=total)
+            log_output_artifacts(output_dir)
+
+            if not failed:
+                evaluate_outputs(output_dir)
+                LOGGER.info(f"\n✓ all sub-tasks complete — total {fmt_total}")
+            else:
+                mlflow.set_tag("failure_task", final_state.get("current_task", "unknown"))
+                mlflow.MlflowClient().set_terminated(
+                    mlflow.active_run().info.run_id, status="FAILED"
+                )
+                LOGGER.error(f"\n✗ agent failed after {fmt_total}")
+                sys.exit(1)
 
 
 if __name__ == "__main__":

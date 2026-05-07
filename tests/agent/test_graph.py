@@ -3,10 +3,10 @@ import pytest
 from buc_factory.agent.entity import PLAN
 from buc_factory.agent.graph import (
     _DEFAULT_MAX_TOKENS,
-    _DEFAULT_MODEL,
     _LARGE_MAX_TOKENS,
     _PARALLEL_GROUP_NEXT,
     _PARALLEL_GROUPS,
+    _TASK_MODEL,
     _TASKS_WITHOUT_READ_FILE,
     _task_config,
 )
@@ -45,7 +45,7 @@ def test_all_restricted_tasks_exist_in_plan():
     "task", ["write_recruiter_solution", "generate_data_script", "generate_starter"]
 )
 def test_large_tasks_get_large_token_budget(task):
-    max_tok, _ = _task_config(task)
+    max_tok, _, _ = _task_config(task)
     assert max_tok == _LARGE_MAX_TOKENS
 
 
@@ -54,26 +54,50 @@ def test_large_tasks_get_large_token_budget(task):
     ["bootstrap_domain", "roll_scenario", "write_brief", "design_data_schema", "final_assembly"],
 )
 def test_standard_tasks_get_default_token_budget(task):
-    max_tok, _ = _task_config(task)
+    max_tok, _, _ = _task_config(task)
     assert max_tok == _DEFAULT_MAX_TOKENS
 
 
 def test_haiku_tasks_use_haiku_model():
     for task in ("roll_scenario", "final_assembly"):
-        _, model = _task_config(task)
+        _, model, _ = _task_config(task)
         assert "haiku" in model
 
 
 def test_opus_tasks_use_opus_model():
     for task in ("generate_starter", "write_recruiter_solution"):
-        _, model = _task_config(task)
+        _, model, _ = _task_config(task)
         assert "opus" in model
 
 
-def test_default_tasks_use_sonnet_model():
-    for task in ("bootstrap_domain", "write_brief", "design_data_schema", "generate_data_script"):
-        _, model = _task_config(task)
-        assert model == _DEFAULT_MODEL
+def test_claude_tasks_have_claude_provider():
+    for task in ("bootstrap_domain", "write_brief", "generate_starter", "write_recruiter_solution"):
+        _, _, provider = _task_config(task)
+        assert provider == "claude"
+
+
+def test_openai_tasks_have_openai_provider():
+    for task in ("design_data_schema", "generate_data_script"):
+        _, _, provider = _task_config(task)
+        assert provider == "openai"
+
+
+def test_design_data_schema_uses_gpt():
+    _, model, provider = _task_config("design_data_schema")
+    assert model.startswith("gpt")
+    assert provider == "openai"
+
+
+def test_generate_data_script_uses_o4_mini():
+    _, model, provider = _task_config("generate_data_script")
+    assert model == "o4-mini"
+    assert provider == "openai"
+
+
+def test_all_tasks_have_a_model():
+    for task in PLAN:
+        assert task in _TASK_MODEL
+        assert _TASK_MODEL[task]
 
 
 # ── _PARALLEL_GROUPS ──────────────────────────────────────────────

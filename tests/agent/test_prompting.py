@@ -1,38 +1,38 @@
 import pytest
 
 from buc_factory.agent.entity import DomainConfig
-from buc_factory.agent.prompting import dax_or_calc, task_prompt
+from buc_factory.agent.prompting import _is_python, calc_language, task_prompt
 
 _NA = "(not yet available)"
 
 
 @pytest.fixture
-def cfg_tableau() -> DomainConfig:
+def cfg_python_ds() -> DomainConfig:
     return DomainConfig(
         industry="retail",
         company_context="A retailer",
         location="London",
         language="English",
-        role="Analyst",
+        role="Data Scientist",
         seniority="Mid",
-        tool="Tableau Desktop",
-        duration_minutes=60,
-        deliverable_format="TWBX",
+        tool="Python (Jupyter)",
+        duration_minutes=90,
+        deliverable_format="IPYNB",
     )
 
 
 @pytest.fixture
-def cfg_looker() -> DomainConfig:
+def cfg_python_da() -> DomainConfig:
     return DomainConfig(
         industry="saas",
         company_context="A SaaS company",
-        location="San Francisco",
-        language="English",
-        role="Analyst",
-        seniority="Senior",
-        tool="Looker",
-        duration_minutes=90,
-        deliverable_format="LookML",
+        location="Paris",
+        language="French",
+        role="Data Analyst",
+        seniority="Junior",
+        tool="Python",
+        duration_minutes=60,
+        deliverable_format="IPYNB",
     )
 
 
@@ -101,14 +101,23 @@ def test_generate_starter_powerbi_embeds_schema(cfg):
     assert _NA not in p
 
 
-def test_generate_starter_tableau_embeds_schema(cfg_tableau):
-    p = task_prompt("generate_starter", cfg_tableau, None, data_schema_json='{"files": []}')
+def test_generate_starter_python_ds_embeds_schema(cfg_python_ds):
+    p = task_prompt("generate_starter", cfg_python_ds, None, data_schema_json='{"files": []}')
     assert '{"files": []}' in p
+    assert "notebook.ipynb" in p
+    assert "requirements.txt" in p
+    assert "xgboost" in p
+    assert "tensorflow" in p
+    assert "Modelling" in p
 
 
-def test_generate_starter_looker_embeds_schema(cfg_looker):
-    p = task_prompt("generate_starter", cfg_looker, None, data_schema_json='{"files": []}')
+def test_generate_starter_python_da_embeds_schema(cfg_python_da):
+    p = task_prompt("generate_starter", cfg_python_da, None, data_schema_json='{"files": []}')
     assert '{"files": []}' in p
+    assert "notebook.ipynb" in p
+    assert "requirements.txt" in p
+    assert "xgboost" not in p
+    assert "tensorflow" not in p
 
 
 def test_write_recruiter_solution_embeds_all_three(cfg):
@@ -158,20 +167,26 @@ def test_final_assembly_renders(cfg):
     assert "final" in p.lower() or "assembly" in p.lower()
 
 
-# ── dax_or_calc helper ────────────────────────────────────────────
+# ── calc_language helper ────────────────────────────────────────────
 
 
-def test_dax_or_calc_power_bi():
-    assert dax_or_calc("Power BI Desktop") == "DAX"
+def test_calc_language_power_bi():
+    assert calc_language("Power BI Desktop") == "DAX"
 
 
-def test_dax_or_calc_tableau():
-    assert "Tableau" in dax_or_calc("Tableau Desktop")
+def test_calc_language_python():
+    assert "Python" in calc_language("Python (Jupyter)")
+    assert "pandas" in calc_language("Python")
+    assert "Python" in calc_language("Jupyter Notebook")
 
 
-def test_dax_or_calc_looker():
-    assert "LookML" in dax_or_calc("Looker")
+def test_calc_language_unknown():
+    assert calc_language("Some BI Tool") == "calculation"
 
 
-def test_dax_or_calc_unknown():
-    assert dax_or_calc("Some BI Tool") == "calculation"
+def test_is_python():
+    assert _is_python("Python")
+    assert _is_python("Python (Jupyter)")
+    assert _is_python("Jupyter Notebook")
+    assert not _is_python("Power BI")
+    assert not _is_python("Tableau Desktop")
