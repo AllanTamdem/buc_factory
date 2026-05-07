@@ -190,8 +190,10 @@ tasks:
 
       NOTE: The .platform files are required by Power BI Desktop to identify
       artifact types. Without them the project will not open.
-      Each .platform file must be valid JSON with schema, metadata.type,
-      metadata.displayName, config.version, and config.logicalId (any UUID).
+      Use EXACTLY this $schema value (copy verbatim — do not invent a URL):
+        "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json"
+      Other required fields: metadata.type, metadata.displayName,
+      config.version ("2.0"), and config.logicalId (any UUID).
 
       Tables connect to ../data/*.csv via Csv.Document with relative paths.
 
