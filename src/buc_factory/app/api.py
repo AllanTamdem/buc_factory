@@ -14,12 +14,12 @@ Usage:
     python -m buc_factory.app.api
 """
 
+import importlib.resources
 import io
 import json
 import logging
 import logging.handlers
 import tempfile
-import threading
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -31,7 +31,9 @@ from typing import Any
 import mlflow
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from ..agent.entity import PLAN, BucState, DomainConfig
 from ..agent.graph import (
@@ -42,10 +44,12 @@ from ..agent.graph import (
 )
 from ..tracking import (
     evaluate_outputs,
+    get_run_id,
     log_config,
     log_output_artifacts,
     log_tasks_summary,
     reset_run,
+    set_run_id,
     setup_mlflow,
 )
 from .models import RunListResponse, RunParameters, RunRequest, RunResponse, RunSummary
@@ -59,14 +63,12 @@ _MODEL_TAG = (
     + " / ".join(sorted(set(_CLAUDE_TO_OPENAI.values()) | set(_TASK_OPENAI_OVERRIDE.values())))
 )
 
-_log_tls = threading.local()
-
 
 class _RunIdFilter(logging.Filter):
     """Injects the current run_id into every log record for this thread."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.run_id = getattr(_log_tls, "run_id", "-")
+        record.run_id = get_run_id()
         return True
 
 
@@ -134,11 +136,25 @@ async def _lifespan(app: FastAPI):  # noqa: ARG001
     yield
 
 
+_STATIC_DIR = importlib.resources.files("buc_factory").joinpath("static")
+
 app = FastAPI(
     title="BUC Factory",
     description="Generate and download BI recruitment assessment packages.",
     lifespan=_lifespan,
+    docs_url=None,  # replaced by custom endpoint below
 )
+
+app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
+
+@app.get("/docs", include_in_schema=False, response_class=HTMLResponse)
+async def swagger_ui() -> HTMLResponse:
+    return get_swagger_ui_html(
+        openapi_url="/openapi.json",
+        title="BUC Factory",
+        swagger_favicon_url="/static/logo_mark.svg",
+    )
 
 
 # ── internal helpers ───────────────────────────────────────────────
@@ -272,11 +288,11 @@ def _load_initial_state(output_dir: Path) -> BucState:
 
 def _execute_run(run_id: str, cfg: DomainConfig) -> None:
     """Full agent pipeline — runs synchronously in a background thread."""
-    _log_tls.run_id = run_id  # tag every log line from this thread with the run id
+    set_run_id(run_id)
     try:
         _execute_run_inner(run_id, cfg)
     finally:
-        _log_tls.run_id = "-"  # clear before thread returns to pool
+        set_run_id("-")
 
 
 def _execute_run_inner(run_id: str, cfg: DomainConfig) -> None:

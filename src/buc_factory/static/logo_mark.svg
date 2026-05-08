@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img">
+<title>Use Case Factory logo</title>
+<desc>An abstract mark showing one configuration input flowing through a central agent loop and emerging as three deliverable outputs.</desc>
+
+<style>
+  .container { fill: none; stroke: #534AB7; stroke-width: 6; }
+  .input     { fill: #5F5E5A; }
+  .agent     { fill: #534AB7; }
+  .output    { fill: #1D9E75; }
+  .connector { stroke: #534AB7; stroke-width: 4; stroke-linecap: round; fill: none; }
+  @media (prefers-color-scheme: dark) {
+    .container { stroke: #AFA9EC; }
+    .input     { fill: #B4B2A9; }
+    .agent     { fill: #AFA9EC; }
+    .output    { fill: #5DCAA5; }
+    .connector { stroke: #AFA9EC; }
+  }
+</style>
+
+<rect class="container" x="14" y="14" width="172" height="172" rx="36"/>
+
+<circle class="input" cx="44" cy="100" r="10"/>
+
+<line class="connector" x1="58" y1="100" x2="80" y2="100"/>
+
+<rect class="agent" x="80" y="80" width="40" height="40" rx="8"/>
+
+<line class="connector" x1="120" y1="100" x2="140" y2="60"/>
+<line class="connector" x1="120" y1="100" x2="140" y2="100"/>
+<line class="connector" x1="120" y1="100" x2="140" y2="140"/>
+
+<circle class="output" cx="156" cy="60" r="8"/>
+<circle class="output" cx="156" cy="100" r="8"/>
+<circle class="output" cx="156" cy="140" r="8"/>
+
+</svg>
