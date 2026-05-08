@@ -26,6 +26,16 @@ def _get_task_log() -> list[dict]:
     return _tls.log
 
 
+def set_run_id(run_id: str) -> None:
+    """Set the run ID for the current thread (used in log filtering)."""
+    _tls.run_id = run_id
+
+
+def get_run_id() -> str:
+    """Return the run ID for the current thread, or '-' if unset."""
+    return getattr(_tls, "run_id", "-")
+
+
 # Pricing in $ per 1M tokens (input, output)
 _MODEL_PRICING: dict[str, tuple[float, float]] = {
     # Anthropic

@@ -6,6 +6,7 @@ services:
     image: buc-factory:latest
     container_name: buc-factory-api
     command: buc-factory-api
+    restart: unless-stopped
     env_file: .env
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
@@ -18,11 +19,12 @@ services:
       mlflow:
         condition: service_healthy
 
-  # ── CLI one-shot runner ─────────────────────────────────────────
+  # ── CLI one-shot runner (use docker compose run, not up) ────────
   buc_factory:
     build: .
     image: buc-factory:latest
     container_name: buc-factory
+    profiles: ["cli"]
     env_file: .env
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
@@ -40,6 +42,7 @@ services:
   mlflow:
     image: ghcr.io/mlflow/mlflow:v3.11.1
     container_name: mlflow
+    restart: unless-stopped
     ports:
       - "5001:5000"
     volumes:
@@ -63,6 +66,6 @@ volumes:
 # Useful commands:
 #   docker compose up mlflow api -d      # start MLflow + API server
 #   docker compose up mlflow -d          # start MLflow server only
-#   docker compose run --rm buc_factory --config conf/... --output-dir data/run_001
+#   docker compose --profile cli run --rm buc_factory --config conf/... --output-dir data/run_001
 #   docker compose down --rmi all        # tear down everything
 #   docker system prune -a               # full cleanup

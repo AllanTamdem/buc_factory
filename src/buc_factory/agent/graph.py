@@ -30,7 +30,7 @@ from langgraph.types import Command
 
 from ..llm.claudeai import AnthropicLLM
 from ..llm.gptai import OpenAILLM
-from ..tracking import log_prompt, log_task_result, register_system_prompt
+from ..tracking import get_run_id, log_prompt, log_task_result, register_system_prompt, set_run_id
 from .entity import PLAN, BucState, DomainConfig
 from .prompting import build_system, task_prompt
 from .tool import make_tools
@@ -461,10 +461,14 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
         task_names = _PARALLEL_GROUPS[state["task_index"]]
         LOGGER.info(f"\n━━━ [parallel: {' ∥ '.join(task_names)}] ━━━")
 
+        parent_run_id = get_run_id()
+
+        def _worker(name: str) -> tuple:
+            set_run_id(parent_run_id)
+            return _run_one_task_full(name, state)
+
         with ThreadPoolExecutor(max_workers=len(task_names)) as executor:
-            futures = {
-                executor.submit(_run_one_task_full, name, state): name for name in task_names
-            }
+            futures = {executor.submit(_worker, name): name for name in task_names}
 
         results = {}
         for future, name in futures.items():

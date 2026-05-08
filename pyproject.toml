@@ -5,9 +5,21 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "buc-factory"
 version = "0.1.0"
-description = "An AI agent for business use cases generation"
+description = "An AI agent that generates role-specific data recruitment assessments from a single YAML config file."
 readme = "README.md"
+license = "AGPL-3.0-only"
 requires-python = ">=3.12"
+authors = [
+    { name = "Alain TAMDEM", email = "allan.tamdem@gmail.com" },
+]
+urls = { Repository = "https://github.com/AllanTamdem/buc_factory", Documentation = "https://github.com/AllanTamdem/buc_factory#readme" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "anthropic>=0.97.0",
     "python-dotenv>=1.0.0",
@@ -19,6 +31,7 @@ dependencies = [
     "openai>=1.0.0",
     "mlflow>=3.11.1",
     "uvicorn[standard]>=0.30.0",
+    "aiofiles>=23.0.0",
 ]
 
 [project.scripts]
@@ -28,7 +41,7 @@ buc-factory-api = "buc_factory.app.api:run"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"buc_factory" = ["conf/*.yml"]
+"buc_factory" = ["conf/*.yml", "static/*.svg"]
 
 [dependency-groups]
 dev = [

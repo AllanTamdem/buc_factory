@@ -1,6 +1,13 @@
 # buc-factory
 
-An AI agent that generates complete, industry-specific BI recruitment assessments — candidate brief, synthetic datasets, Power BI starter project, and recruiter solution — from a single YAML config file.
+![Use Case Factory](docs/logo_lockup.svg)
+
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Powered by Claude](https://img.shields.io/badge/powered%20by-Claude-D97706?style=flat&logo=anthropic&logoColor=white)](https://anthropic.com/claude)
+[![Powered by OpenAI](https://img.shields.io/badge/powered%20by-OpenAI-412991?style=flat)](https://openai.com)
+[![Docker](https://img.shields.io/badge/docker-ready-2496ED?style=flat&logo=docker&logoColor=white)](https://www.docker.com)
+
+An AI agent that generates complete, role-specific data recruitment assessments — candidate brief, synthetic datasets, a tool-specific starter project, and a recruiter solution — from a single YAML config file.
 
 Each run produces a unique scenario by randomly combining business dimensions (analytical angle, data volume, industry twist, delivery format) so no two assessments are identical.
 
@@ -25,17 +32,25 @@ For every run the agent writes a self-contained output directory:
 │   ├── data/
 │   │   ├── <entity>.csv            # one CSV per entity (300-800 rows each)
 │   │   └── ...
-│   ├── Assessment.pbip             # Power BI project file (PBIP format)
+│   │
+│   │   ── PBIP format ──
+│   ├── Assessment.pbip             # Power BI project file
 │   ├── Assessment.SemanticModel/   # semantic model definition (TMDL)
 │   └── Assessment.Report/         # report scaffold
 │
+│   │   ── IPYNB format ──
+│   └── notebook.ipynb              # Jupyter notebook (DA or DS variant)
+│   └── requirements.txt
+│
 └── solution/
-    └── recruiter_solution.md       # full answer key with KPIs, DAX, trap explanations
+    └── recruiter_solution.md       # full answer key with metrics, expected code, trap explanations
 ```
 
 ---
 
 ## Agent workflow
+
+![Architecture](docs/factory_architecture.svg)
 
 The agent is a **LangGraph state machine** with five nodes that loop until all eight sub-tasks complete or a task exhausts its retry budget.
 
@@ -54,16 +69,16 @@ Two task pairs run concurrently via `ThreadPoolExecutor`:
 
 ### The eight sub-tasks (in order)
 
-| # | Task | Model | What the model does | Validation |
-|---|------|-------|---------------------|------------|
-| 1 | `bootstrap_domain` | claude-sonnet-4-6 | Writes `bootstrap.json` with dimensions and entity list (inferred from industry or pinned from config) | Non-empty dimensions and ≥ 3 entities |
-| 2 | `roll_scenario` | claude-haiku-4-5 | Writes `scenario.json` with one value randomly sampled per dimension (rolled in Python, not by the model) | All dimension keys present |
-| 3 | `write_brief` | claude-sonnet-4-6 | Writes `brief/candidate_brief.md` in the target language, 600-900 words, anchored to the rolled scenario | File exists, ≥ 1 500 chars |
-| 4 | `design_data_schema` | gpt-5.3-chat-latest | Writes `brief/data_schema.json` with column definitions, FK relationships, and 2-4 realistic data traps | ≥ 80% of entities covered, at least one trap declared |
-| 5 | `generate_data_script` | o4-mini | Writes `starter/generate_data.py` (schema pre-loaded in prompt), runs it, verifies FK integrity | All entity CSVs present, FK heuristic passes |
-| 6 | `generate_starter` | claude-opus-4-7 | Builds the tool-specific starter project under `starter/` (PBIP or Python notebook; schema pre-loaded in prompt) | Required files present and valid JSON |
-| 7 | `write_recruiter_solution` | claude-opus-4-7 | Writes `solution/recruiter_solution.md` (brief, scenario, and schema pre-loaded in prompt) | File exists, ≥ 3 000 chars, contains DAX/calc keyword |
-| 8 | `final_assembly` | claude-haiku-4-5 | Checks all expected artifacts are present | All required paths exist |
+| # | Task | Model | Fallback | What the model does | Validation |
+|---|------|-------|:--------:|---------------------|------------|
+| 1 | `bootstrap_domain` | claude-sonnet-4-6 | gpt-5.4 | Writes `bootstrap.json` with dimensions and entity list (inferred from industry or pinned from config) | Non-empty dimensions and ≥ 3 entities |
+| 2 | `roll_scenario` | claude-haiku-4-5-20251001 | gpt-5-mini | Writes `scenario.json` with one value randomly sampled per dimension (rolled in Python, not by the model) | All dimension keys present |
+| 3 | `write_brief` | claude-sonnet-4-6 | gpt-5.4 | Writes `brief/candidate_brief.md` in the target language, 600-900 words, anchored to the rolled scenario | File exists, ≥ 1 500 chars |
+| 4 | `design_data_schema` | gpt-5.3-chat-latest | — | Writes `brief/data_schema.json` with column definitions, FK relationships, and 2-4 realistic data traps | ≥ 80% of entities covered, at least one trap declared |
+| 5 | `generate_data_script` | o4-mini | — | Writes `starter/generate_data.py` (schema pre-loaded in prompt), runs it, verifies FK integrity | All entity CSVs present, FK heuristic passes |
+| 6 | `generate_starter` | claude-opus-4-7 | gpt-5.3-codex | Builds the tool-specific starter project under `starter/` (PBIP or Python notebook; schema pre-loaded in prompt) | Required files present and valid JSON |
+| 7 | `write_recruiter_solution` | claude-opus-4-7 | gpt-5.5 | Writes `solution/recruiter_solution.md` (brief, scenario, and schema pre-loaded in prompt) | File exists, ≥ 3 000 chars, contains DAX/calc keyword |
+| 8 | `final_assembly` | claude-haiku-4-5-20251001 | gpt-5-mini | Checks all expected artifacts are present | All required paths exist |
 
 ### Retry logic
 
@@ -146,7 +161,7 @@ git clone <repo>
 cd buc_factory
 
 uv sync
-cp .env.example .env   # add your ANTHROPIC_API_KEY
+cp .env.example .env   # add your ANTHROPIC_API_KEY and OPENAI_API_KEY
 ```
 
 `.env`:
@@ -299,7 +314,7 @@ docker compose up mlflow api -d
 # MLflow UI at http://localhost:5001
 
 # Run a one-shot CLI assessment
-docker compose run --rm buc_factory \
+docker compose --profile cli run --rm buc_factory \
   --config conf/industry_spec/p&c_insurance_france.yml \
   --output-dir data/run_001
 ```
@@ -392,7 +407,7 @@ Returns `(schemas, dispatch)`. The model only sees `run_python` during `generate
 | `read_file(path)` | Read a previously written file (not available for `bootstrap_domain`, `roll_scenario`, `write_brief`, `design_data_schema` — their context is pre-loaded in the prompt) |
 | `list_files(directory)` | List files under a directory |
 | `run_python(script_path)` | Execute a Python script; returns stdout/stderr/exit code (only available during `generate_data_script`) |
-| `validate_csv_integrity(spec_json)` | Check FK integrity between a fact and dimension CSV (only available during `generate_data_script`) |
+| `validate_csv_integrity(facts, fact_fk, dim, dim_pk)` | Check FK integrity between a fact and dimension CSV (only available during `generate_data_script`) |
 | `validate_json(path)` | Verify a file contains valid JSON |
 | `mark_subtask_complete(summary)` | Signal task completion (exits the tool-use loop) |
 
