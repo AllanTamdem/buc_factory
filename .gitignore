@@ -211,3 +211,6 @@ __marimo__/
 data/
 mlflow_data/
 log/
+# SQLite WAL auxiliary files
+*.db-shm
+*.db-wal

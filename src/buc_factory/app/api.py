@@ -3,6 +3,7 @@ FastAPI server for BUC Factory: run the agent and download assessment packages.
 
 Endpoints:
     GET  /runs                         – list all runs from MLflow (params + scenario + status)
+    GET  /runs/search?q=…&limit=…      – semantic search over completed runs
     POST /runs                         – submit a new agent run (async, 202)
     GET  /runs/{run_id}                – run details from MLflow (params, scenario, status)
     GET  /runs/{run_id}/recruiter.zip  – brief/ + solution/ (from MLflow artifacts)
@@ -24,13 +25,14 @@ import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
 import mlflow
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -52,7 +54,16 @@ from ..tracking import (
     set_run_id,
     setup_mlflow,
 )
-from .models import RunListResponse, RunParameters, RunRequest, RunResponse, RunSummary
+from .models import (
+    RunListResponse,
+    RunParameters,
+    RunRequest,
+    RunResponse,
+    RunSummary,
+    SearchResult,
+)
+from .search import build_index_text, store_embedding
+from .search import search as _search_runs
 
 load_dotenv()
 
@@ -269,6 +280,11 @@ def _build_zip_from_mlflow(
     return buf
 
 
+def _index_run(run_id: str, mlflow_run_id: str, cfg: DomainConfig, state: BucState) -> None:
+    text = build_index_text(asdict(cfg), state.get("scenario"))
+    store_embedding(run_id, mlflow_run_id, text)
+
+
 def _load_initial_state(output_dir: Path) -> BucState:
     return BucState(
         messages=[],
@@ -332,6 +348,7 @@ def _execute_run_inner(run_id: str, cfg: DomainConfig) -> None:
 
                 if not failed:
                     evaluate_outputs(output_dir)
+                    _index_run(run_id, active_run.info.run_id, cfg, final_state)
                     LOGGER.info(f"\n✓ [{run_id}] all sub-tasks complete — total {fmt_total}")
                 else:
                     mlflow.set_tag("failure_task", final_state.get("current_task", "unknown"))
@@ -405,6 +422,34 @@ def create_run(request: RunRequest, background_tasks: BackgroundTasks) -> RunRes
     _run_status[run_id] = "queued"
     background_tasks.add_task(_execute_run, run_id, cfg)
     return RunResponse(run_id=run_id, status="queued")
+
+
+@app.get("/runs/search", response_model=list[SearchResult])
+def search_runs(
+    q: str = Query(..., description="Free-text query matched by semantic similarity"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of results"),
+) -> list[SearchResult]:
+    """Semantic search over completed runs using embedding similarity."""
+    hits = _search_runs(q, k=limit)
+    if not hits:
+        return []
+    results = []
+    for api_run_id, score in hits:
+        mlflow_run = _find_mlflow_run(api_run_id)
+        scenario = _fetch_scenario(mlflow_run.info.run_id) if mlflow_run else None
+        results.append(
+            SearchResult(
+                score=score,
+                run_id=api_run_id,
+                status=_effective_status(
+                    api_run_id, mlflow_run.info.status if mlflow_run else None
+                ),
+                mlflow_run_id=mlflow_run.info.run_id if mlflow_run else None,
+                parameters=_extract_parameters(mlflow_run) if mlflow_run else None,
+                scenario=scenario,
+            )
+        )
+    return results
 
 
 @app.get("/runs/{run_id}", response_model=RunSummary)

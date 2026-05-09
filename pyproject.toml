@@ -12,7 +12,6 @@ requires-python = ">=3.12"
 authors = [
     { name = "Alain TAMDEM", email = "allan.tamdem@gmail.com" },
 ]
-urls = { Repository = "https://github.com/AllanTamdem/buc_factory", Documentation = "https://github.com/AllanTamdem/buc_factory#readme" }
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -28,14 +27,22 @@ dependencies = [
     "langchain-anthropic>=1.4.1",
     "langchain-openai>=0.3.0",
     "langgraph>=1.0.0",
+    "numpy>=1.26.0",
     "openai>=1.0.0",
+    "pandas>=2.0.0",
+    "pyyaml>=6.0",
     "mlflow>=3.11.1",
     "uvicorn[standard]>=0.30.0",
     "aiofiles>=23.0.0",
 ]
 
+[project.urls]
+Repository = "https://github.com/AllanTamdem/buc_factory"
+Documentation = "https://github.com/AllanTamdem/buc_factory#readme"
+
 [project.scripts]
 buc-factory-api = "buc_factory.app.api:run"
+buc-factory-backfill = "buc_factory.app.backfill:backfill"
 
 [tool.setuptools.packages.find]
 where = ["src"]

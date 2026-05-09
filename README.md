@@ -196,6 +196,18 @@ Logs are written to both the console and `log/agent.log` (rotating, 10 MB per fi
 
 ---
 
+### Backfill search index
+
+If you have existing MLflow runs that predate the search feature, index them in one shot:
+
+```bash
+buc-factory-backfill
+```
+
+Only successfully completed runs (`FINISHED` status) are indexed. Already-indexed runs are skipped, so the command is safe to re-run. Requires `MLFLOW_TRACKING_URI` and `OPENAI_API_KEY` in the environment.
+
+---
+
 ### API server
 
 ```bash
@@ -213,6 +225,7 @@ Multiple runs can execute concurrently — each background thread keeps its own 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/runs` | List all runs from MLflow with status, parameters, and scenario |
+| `GET` | `/runs/search?q=…&limit=…` | Semantic search over completed runs (embedding similarity) |
 | `POST` | `/runs` | Submit a new agent run (returns `202` immediately) |
 | `GET` | `/runs/{run_id}` | Run details from MLflow: status, parameters, scenario |
 | `GET` | `/runs/{run_id}/recruiter.zip` | Download `brief/` + `solution/` (from MLflow artifacts) |
@@ -256,6 +269,14 @@ curl http://localhost:8000/runs/run_010
 curl -O http://localhost:8000/runs/run_010/recruiter.zip
 curl -O http://localhost:8000/runs/run_010/candidate.zip
 ```
+
+#### Semantic search
+
+```bash
+curl "http://localhost:8000/runs/search?q=data+scientist+retail&limit=5"
+```
+
+Results are ranked by cosine similarity against embeddings of run parameters and scenario values. Queries work in English or French. Embeddings are stored in `mlflow_data/embeddings.db` and are only created for successfully completed runs.
 
 ---
 
@@ -339,8 +360,10 @@ buc_factory/
 │   ├── __main__.py             # CLI entry point, MLflow run, state loading, resume logic
 │   ├── tracking.py             # MLflow helpers: metrics, artifacts, prompt registry, LLM judge
 │   ├── app/
-│   │   ├── api.py              # FastAPI app: POST /runs, GET /runs, zip download endpoints
-│   │   └── models.py           # Pydantic I/O models: RunRequest, RunResponse, Dimensions, …
+│   │   ├── api.py              # FastAPI app: run submission, catalog browsing, search, zip download
+│   │   ├── backfill.py         # one-shot CLI to index existing MLflow runs into the search DB
+│   │   ├── models.py           # Pydantic I/O models: RunRequest, RunResponse, SearchResult, …
+│   │   └── search.py           # embedding-based semantic search (OpenAI text-embedding-3-small + SQLite)
 │   ├── agent/
 │   │   ├── entity.py           # BucState (TypedDict) and PLAN (task order)
 │   │   ├── graph.py            # LangGraph nodes: prepare_task, run_task, validate_task, fail_task
@@ -354,6 +377,7 @@ buc_factory/
 │
 ├── mlflow_data/
 │   ├── mlflow.db               # SQLite tracking backend (gitignored)
+│   ├── embeddings.db           # run embedding index for semantic search (gitignored)
 │   └── artifacts/              # run artifacts: prompts, outputs, task_summary.md (gitignored)
 │
 ├── notebook/

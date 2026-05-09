@@ -32,7 +32,7 @@ from ..llm.claudeai import AnthropicLLM
 from ..llm.gptai import OpenAILLM
 from ..tracking import get_run_id, log_prompt, log_task_result, register_system_prompt, set_run_id
 from .entity import PLAN, BucState, DomainConfig
-from .prompting import build_system, task_prompt
+from .prompting import build_system, raw_system_template, task_prompt
 from .tool import make_tools
 from .validator import MAX_RETRIES_PER_TASK, TASKS_WITH_RUN_PYTHON, validate_and_extract
 
@@ -155,7 +155,8 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
     schemas, dispatch = make_tools(output_dir)
     system_prompt_claude = build_system(cfg, provider="claude")
     system_prompt_openai = build_system(cfg, provider="openai")
-    register_system_prompt(system_prompt_claude)
+    register_system_prompt(raw_system_template("claude"), name="buc-factory-system-claude")
+    register_system_prompt(raw_system_template("openai"), name="buc-factory-system-openai")
     llm_claude = AnthropicLLM()
     llm_openai = OpenAILLM()
 

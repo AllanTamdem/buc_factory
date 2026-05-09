@@ -45,6 +45,11 @@ def _prompts(provider: str = "claude") -> dict:
 # ──────────────────────────────────────────────────────────────────
 
 
+def raw_system_template(provider: str = "claude") -> str:
+    """Return the unrendered system prompt template (for versioning in MLflow)."""
+    return _prompts(provider)["system"]
+
+
 def build_system(cfg: DomainConfig, provider: str = "claude") -> str:
     return fmt(_prompts(provider)["system"], **vars(cfg))
 
