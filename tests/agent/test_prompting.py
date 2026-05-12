@@ -1,7 +1,7 @@
 import pytest
 
 from buc_factory.agent.entity import DomainConfig
-from buc_factory.agent.prompting import _is_python, calc_language, task_prompt
+from buc_factory.agent.prompting import _is_python, calc_language, raw_system_template, task_prompt
 
 _NA = "(not yet available)"
 
@@ -190,3 +190,38 @@ def test_is_python():
     assert _is_python("Jupyter Notebook")
     assert not _is_python("Power BI")
     assert not _is_python("Tableau Desktop")
+
+
+# ── raw_system_template ───────────────────────────────────────────
+
+
+def test_raw_system_template_returns_string():
+    tmpl = raw_system_template("claude")
+    assert isinstance(tmpl, str)
+    assert len(tmpl) > 100
+
+
+def test_raw_system_template_contains_placeholders():
+    tmpl = raw_system_template("claude")
+    # Template must not have been rendered — cfg variables must still be present
+    assert "{" in tmpl
+
+
+def test_raw_system_template_does_not_contain_cfg_values(cfg):
+    tmpl = raw_system_template("claude")
+    assert cfg.industry not in tmpl
+    assert cfg.role not in tmpl
+
+
+def test_raw_system_template_openai_returns_string():
+    tmpl = raw_system_template("openai")
+    assert isinstance(tmpl, str)
+    assert len(tmpl) > 100
+
+
+def test_raw_system_template_providers_may_differ():
+    claude_tmpl = raw_system_template("claude")
+    openai_tmpl = raw_system_template("openai")
+    # They may be equal (if no patch file) or different — both are valid
+    assert isinstance(claude_tmpl, str)
+    assert isinstance(openai_tmpl, str)

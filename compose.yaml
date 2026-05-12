@@ -15,6 +15,7 @@ services:
     volumes:
       - ./conf:/app/conf
       - ./log:/app/log
+      - ./mlflow_data:/app/mlflow_data
     depends_on:
       mlflow:
         condition: service_healthy

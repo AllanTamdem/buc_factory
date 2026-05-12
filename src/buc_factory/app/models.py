@@ -110,3 +110,12 @@ class RunListResponse(BaseModel):
 class RunResponse(BaseModel):
     run_id: str
     status: str
+
+
+class SearchResult(BaseModel):
+    score: float
+    run_id: str
+    status: str
+    mlflow_run_id: str | None = None
+    parameters: RunParameters | None = None
+    scenario: dict | None = None

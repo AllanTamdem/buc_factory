@@ -177,17 +177,17 @@ def log_tasks_summary(wall_clock_s: float | None = None) -> None:
         LOGGER.warning("task summary logging skipped: %s", exc)
 
 
-def register_system_prompt(template: str) -> None:
+def register_system_prompt(template: str, name: str = "buc-factory-system") -> None:
     """Register the system prompt in the MLflow Prompt Registry.
 
     Creates a new version only when the template text changes.
     """
     try:
-        existing = mlflow.genai.load_prompt("buc-factory-system", allow_missing=True)
+        existing = mlflow.genai.load_prompt(name, allow_missing=True)
         if existing is not None and existing.template == template:
             return
         mlflow.genai.register_prompt(
-            name="buc-factory-system",
+            name=name,
             template=template,
             commit_message="system prompt",
         )

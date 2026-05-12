@@ -213,8 +213,11 @@ dependencies = [
     { name = "langchain-openai" },
     { name = "langgraph" },
     { name = "mlflow" },
+    { name = "numpy" },
     { name = "openai" },
+    { name = "pandas" },
     { name = "python-dotenv" },
+    { name = "pyyaml" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -237,8 +240,11 @@ requires-dist = [
     { name = "langchain-openai", specifier = ">=0.3.0" },
     { name = "langgraph", specifier = ">=1.0.0" },
     { name = "mlflow", specifier = ">=3.11.1" },
+    { name = "numpy", specifier = ">=1.26.0" },
     { name = "openai", specifier = ">=1.0.0" },
+    { name = "pandas", specifier = ">=2.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
 ]
 

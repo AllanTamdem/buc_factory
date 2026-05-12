@@ -274,3 +274,53 @@ def test_download_candidate_zip_excludes_generate_data(client, tmp_path):
     assert "starter/generate_data.py" not in names
     assert "starter/project.pbip" in names
     assert "brief/brief.md" in names
+
+
+# ── GET /runs/search ──────────────────────────────────────────────
+
+
+def test_search_runs_returns_results(client):
+    mlflow_run = _make_mlflow_run()
+    with (
+        patch("buc_factory.app.api._search_runs", return_value=[("run_001", 0.92)]),
+        patch("buc_factory.app.api._find_mlflow_run", return_value=mlflow_run),
+        patch("buc_factory.app.api._fetch_scenario", return_value=None),
+    ):
+        resp = client.get("/runs/search?q=data+analyst+insurance")
+    assert resp.status_code == 200
+    results = resp.json()
+    assert len(results) == 1
+    assert results[0]["run_id"] == "run_001"
+    assert results[0]["score"] == pytest.approx(0.92)
+    assert results[0]["status"] == "done"
+
+
+def test_search_runs_empty_when_no_hits(client):
+    with patch("buc_factory.app.api._search_runs", return_value=[]):
+        resp = client.get("/runs/search?q=nothing")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_search_runs_missing_query_param(client):
+    resp = client.get("/runs/search")
+    assert resp.status_code == 422
+
+
+def test_search_runs_limit_param_passed_through(client):
+    with patch("buc_factory.app.api._search_runs", return_value=[]) as mock_search:
+        client.get("/runs/search?q=test&limit=3")
+    mock_search.assert_called_once_with("test", k=3)
+
+
+def test_search_runs_unknown_mlflow_run(client):
+    with (
+        patch("buc_factory.app.api._search_runs", return_value=[("run_999", 0.75)]),
+        patch("buc_factory.app.api._find_mlflow_run", return_value=None),
+    ):
+        resp = client.get("/runs/search?q=test")
+    assert resp.status_code == 200
+    results = resp.json()
+    assert results[0]["run_id"] == "run_999"
+    assert results[0]["mlflow_run_id"] is None
+    assert results[0]["status"] == "unknown"

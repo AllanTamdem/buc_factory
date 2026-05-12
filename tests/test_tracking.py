@@ -194,3 +194,39 @@ def test_multiple_tasks_accumulate_in_log():
 def test_tracking_module_does_not_import_mlflow_langchain():
     src = open(tracking.__file__).read()  # noqa: SIM115
     assert "mlflow.langchain" not in src
+
+
+# ── register_system_prompt ────────────────────────────────────────
+
+
+def test_register_system_prompt_uses_custom_name():
+    from unittest.mock import MagicMock, patch
+
+    from buc_factory.tracking import register_system_prompt
+
+    mock_prompt = MagicMock()
+    mock_prompt.template = "different template"
+
+    with patch("buc_factory.tracking.mlflow") as mock_mlflow:
+        mock_mlflow.genai.load_prompt.return_value = mock_prompt
+        register_system_prompt("new template", name="buc-factory-system-openai")
+        mock_mlflow.genai.load_prompt.assert_called_once_with(
+            "buc-factory-system-openai", allow_missing=True
+        )
+        mock_mlflow.genai.register_prompt.assert_called_once()
+        call_kwargs = mock_mlflow.genai.register_prompt.call_args.kwargs
+        assert call_kwargs["name"] == "buc-factory-system-openai"
+
+
+def test_register_system_prompt_skips_when_template_unchanged():
+    from unittest.mock import MagicMock, patch
+
+    from buc_factory.tracking import register_system_prompt
+
+    mock_prompt = MagicMock()
+    mock_prompt.template = "same template"
+
+    with patch("buc_factory.tracking.mlflow") as mock_mlflow:
+        mock_mlflow.genai.load_prompt.return_value = mock_prompt
+        register_system_prompt("same template", name="buc-factory-system-claude")
+        mock_mlflow.genai.register_prompt.assert_not_called()
