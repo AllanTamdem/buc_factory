@@ -276,7 +276,7 @@ curl -O http://localhost:8000/runs/run_010/candidate.zip
 curl "http://localhost:8000/runs/search?q=data+scientist+retail&limit=5"
 ```
 
-Results are ranked by cosine similarity against embeddings of run parameters and scenario values. Queries work in English or French. Embeddings are stored in `mlflow_data/embeddings.db` and are only created for successfully completed runs.
+Results are ranked by cosine similarity. Before embedding, the query is expanded into a synthetic run description via `gpt-4o-mini` (HyDE — Hypothetical Document Embeddings), which aligns the query vector with the indexed document space and improves recall for short or ambiguous queries. Pass `use_hyde=False` to embed the raw query instead (one fewer LLM call, lower latency). Queries work in English or French. Embeddings are stored in `mlflow_data/embeddings.db` and are only created for successfully completed runs.
 
 ---
 
@@ -363,7 +363,7 @@ buc_factory/
 │   │   ├── api.py              # FastAPI app: run submission, catalog browsing, search, zip download
 │   │   ├── backfill.py         # one-shot CLI to index existing MLflow runs into the search DB
 │   │   ├── models.py           # Pydantic I/O models: RunRequest, RunResponse, SearchResult, …
-│   │   └── search.py           # embedding-based semantic search (OpenAI text-embedding-3-small + SQLite)
+│   │   └── search.py           # embedding-based semantic search: HyDE query expansion, vectorized cosine similarity, OpenAI text-embedding-3-small, SQLite index
 │   ├── agent/
 │   │   ├── entity.py           # BucState (TypedDict) and PLAN (task order)
 │   │   ├── graph.py            # LangGraph nodes: prepare_task, run_task, validate_task, fail_task
