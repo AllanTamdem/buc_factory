@@ -6,6 +6,8 @@ Endpoints:
     GET  /runs/search?q=…&limit=…      – semantic search over completed runs
     POST /runs                         – submit a new agent run (async, 202)
     GET  /runs/{run_id}                – run details from MLflow (params, scenario, status)
+    GET  /runs/{run_id}/brief          – candidate brief as plain-text markdown
+    GET  /runs/{run_id}/solution       – recruiter solution as plain-text markdown
     GET  /runs/{run_id}/recruiter.zip  – brief/ + solution/ (from MLflow artifacts)
     GET  /runs/{run_id}/candidate.zip  – brief/ + starter/ (from MLflow artifacts,
                                          minus generate_data.py)
@@ -34,7 +36,7 @@ import mlflow
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.openapi.docs import get_swagger_ui_html
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..agent.entity import PLAN, BucState, DomainConfig
@@ -468,6 +470,38 @@ def get_run(run_id: str) -> RunSummary:
         parameters=_extract_parameters(mlflow_run) if mlflow_run else None,
         scenario=scenario,
     )
+
+
+@app.get("/runs/{run_id}/brief", response_class=PlainTextResponse)
+def get_brief(run_id: str) -> str:
+    """Return the candidate brief as plain-text markdown."""
+    mlflow_run_id = _resolve_mlflow_run(run_id)
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            local = mlflow.artifacts.download_artifacts(
+                run_id=mlflow_run_id,
+                artifact_path="outputs/brief/candidate_brief.md",
+                dst_path=tmpdir,
+            )
+            return Path(local).read_text(encoding="utf-8")
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"Brief not found: {exc}") from exc
+
+
+@app.get("/runs/{run_id}/solution", response_class=PlainTextResponse)
+def get_solution(run_id: str) -> str:
+    """Return the recruiter solution as plain-text markdown."""
+    mlflow_run_id = _resolve_mlflow_run(run_id)
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            local = mlflow.artifacts.download_artifacts(
+                run_id=mlflow_run_id,
+                artifact_path="outputs/solution/recruiter_solution.md",
+                dst_path=tmpdir,
+            )
+            return Path(local).read_text(encoding="utf-8")
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"Solution not found: {exc}") from exc
 
 
 @app.get("/runs/{run_id}/recruiter.zip")
