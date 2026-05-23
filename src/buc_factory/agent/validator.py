@@ -90,14 +90,13 @@ def validate_and_extract(
             deliverable_fmt = cfg.deliverable_format.upper()
 
             if deliverable_fmt == "PBIP":
-                required = [
+                required_json = [
                     "Assessment.pbip",
                     "Assessment.SemanticModel/definition.pbism",
                     "Assessment.SemanticModel/definition/model.tmdl",
                     "Assessment.Report/definition.pbir",
-                    "Assessment.Report/report.json",
                 ]
-                for r in required:
+                for r in required_json:
                     if not (starter / r).exists():
                         return False, f"missing {r}", {}
                     if r.endswith((".json", ".pbir", ".pbip", ".pbism")):
@@ -105,6 +104,7 @@ def validate_and_extract(
                             json.loads((starter / r).read_text())
                         except json.JSONDecodeError as e:
                             return False, f"{r} invalid JSON: {e}", {}
+
                 pbism_path = starter / "Assessment.SemanticModel/definition.pbism"
                 if pbism_path.exists():
                     pbism = json.loads(pbism_path.read_text())
@@ -114,7 +114,30 @@ def validate_and_extract(
                             f"definition.pbism version must be '4.0', got '{pbism.get('version')}'",
                             {},
                         )
-                return True, "PBIP starter OK", {}
+
+                # Accept both PBIR (pages/) and PBIR-Legacy (report.json)
+                has_pages = (starter / "Assessment.Report/pages/pages.json").exists()
+                has_legacy = (starter / "Assessment.Report/report.json").exists()
+                if not has_pages and not has_legacy:
+                    return (
+                        False,
+                        "missing report structure: need pages/pages.json (PBIR)"
+                        " or report.json (PBIR-Legacy)",
+                        {},
+                    )
+                if has_pages:
+                    try:
+                        json.loads((starter / "Assessment.Report/pages/pages.json").read_text())
+                    except json.JSONDecodeError as e:
+                        return False, f"pages/pages.json invalid JSON: {e}", {}
+                if has_legacy:
+                    try:
+                        json.loads((starter / "Assessment.Report/report.json").read_text())
+                    except json.JSONDecodeError as e:
+                        return False, f"report.json invalid JSON: {e}", {}
+
+                fmt_label = "PBIR" if has_pages else "PBIR-Legacy"
+                return True, f"PBIP starter OK ({fmt_label})", {}
 
             if _is_python(cfg.tool) or deliverable_fmt == "IPYNB":
                 nb_path = starter / "notebook.ipynb"

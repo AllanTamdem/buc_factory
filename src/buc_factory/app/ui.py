@@ -1004,6 +1004,149 @@ def page_search() -> None:
         st.divider()
 
 
+# ── Page: Simulate ───────────────────────────────────────────────────────────
+
+
+def page_simulate() -> None:
+    _section("Simulate Candidate")
+    st.markdown(
+        "Run an AI-powered candidate simulation against a completed assessment. "
+        "The agent reads the brief and starter project, then fills in a solution "
+        "according to the selected proficiency level."
+    )
+
+    # ── Launch form ───────────────────────────────────────────────────────────
+    st.markdown("#### Launch simulation")
+
+    fc1, fc2 = st.columns([2, 2])
+    run_id_input = fc1.text_input(
+        "Source run ID *",
+        placeholder="run_001",
+        help="The completed assessment run to simulate against.",
+    )
+    mode = fc2.selectbox(
+        "Mode *",
+        ["perfect", "random"],
+        help="'perfect' → expert. 'random' → simulates a candidate at the chosen proficiency.",
+    )
+
+    is_random = mode == "random"
+    sc1, sc2 = st.columns([2, 2])
+    proficiency = sc1.slider(
+        "Proficiency (random mode only)",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.65,
+        step=0.05,
+        disabled=not is_random,
+        help="0 = very junior, 1 = expert. Ignored when mode is 'perfect'.",
+    )
+    seed = sc2.number_input(
+        "Seed (optional)",
+        min_value=0,
+        max_value=99999,
+        value=0,
+        step=1,
+        disabled=not is_random,
+        help="Fix the RNG seed for reproducible random proficiency sampling. 0 = no seed.",
+    )
+
+    submitted = st.button("Launch simulation →", type="primary", use_container_width=False)
+
+    if submitted:
+        if not run_id_input.strip():
+            st.error("Source run ID is required.")
+        else:
+            payload: dict = {"run_id": run_id_input.strip(), "mode": mode}
+            if is_random:
+                payload["proficiency"] = proficiency
+                if int(seed) > 0:
+                    payload["seed"] = int(seed)
+
+            with st.spinner("Queuing simulation…"):
+                result, err = _api_post("/simulations", payload)
+
+            if err:
+                st.error(err)
+            else:
+                sim_id = result["simulation_id"]
+                st.success(f"Simulation queued: **{sim_id}**")
+                st.session_state["sim_detail_id"] = sim_id
+                st.info("Track progress in the **Check status** section below.")
+
+    st.divider()
+
+    # ── Status / download ─────────────────────────────────────────────────────
+    st.markdown("#### Check status")
+    dcol, _ = st.columns([2, 4])
+    with dcol:
+        sim_id_check = st.text_input(
+            "Simulation ID",
+            value=st.session_state.get("sim_detail_id", ""),
+            placeholder="sim_001",
+            key="sim_id_check_input",
+        )
+
+    if sim_id_check.strip():
+        sid = sim_id_check.strip()
+        st.session_state["sim_detail_id"] = sid
+
+        rcol1, rcol2 = st.columns([1, 5])
+        with rcol1:
+            if st.button("Refresh", use_container_width=True):
+                st.rerun()
+
+        data, err = _api_get(f"/simulations/{sid}")
+        if err:
+            st.error(err)
+        else:
+            status = data["status"]
+            hc1, hc2, hc3, hc4 = st.columns(4)
+            hc1.markdown(_badge(status), unsafe_allow_html=True)
+            hc2.markdown(_param("MODE", data.get("mode", "—")), unsafe_allow_html=True)
+            prof = data.get("proficiency")
+            hc3.markdown(
+                _param("PROFICIENCY", f"{prof:.0%}" if prof is not None else "—"),
+                unsafe_allow_html=True,
+            )
+            hc4.markdown(
+                _param("SOURCE RUN", data.get("source_run_id", "—")),
+                unsafe_allow_html=True,
+            )
+
+            if data.get("mlflow_run_id"):
+                st.caption(f"MLflow run: `{data['mlflow_run_id']}`")
+
+            if status == "done":
+                base = _base()
+                st.divider()
+
+                tab_score, tab_dl = st.tabs(["📊 Scoring", "📦 Download"])
+
+                with tab_score:
+                    scoring_text, scoring_err = _fetch_text(base, f"/simulations/{sid}/scoring")
+                    if scoring_err:
+                        st.warning(f"Scoring not available: {scoring_err}")
+                    elif scoring_text:
+                        st.markdown(scoring_text)
+
+                with tab_dl:
+                    st.markdown("Download the completed starter project:")
+                    st.link_button(
+                        "Download solution.zip",
+                        f"{base}/simulations/{sid}/solution.zip",
+                        use_container_width=False,
+                        type="primary",
+                    )
+
+            elif status in ("queued", "running"):
+                st.info("Simulation in progress. Refresh to check for updates.")
+            elif status == "failed":
+                st.error("Simulation failed. Check the agent logs for details.")
+    else:
+        st.info("Enter a simulation ID above to check its status.")
+
+
 # ── Page: Docs ────────────────────────────────────────────────────────────────
 
 
@@ -1061,11 +1204,11 @@ def main() -> None:
         st.divider()
 
         _pending = st.session_state.pop("_pending_nav", None)
-        if _pending in ["Create Run", "All Runs", "Run Detail", "Search", "Docs"]:
+        if _pending in ["Create Run", "All Runs", "Run Detail", "Search", "Simulate", "Docs"]:
             st.session_state["nav"] = _pending
         nav = st.radio(
             "Navigation",
-            ["Create Run", "All Runs", "Run Detail", "Search", "Docs"],
+            ["Create Run", "All Runs", "Run Detail", "Search", "Simulate", "Docs"],
             key="nav",
             label_visibility="collapsed",
         )
@@ -1139,6 +1282,8 @@ def main() -> None:
         page_run_detail()
     elif nav == "Search":
         page_search()
+    elif nav == "Simulate":
+        page_simulate()
     elif nav == "Docs":
         page_docs()
 

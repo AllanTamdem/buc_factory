@@ -1,2 +1,4 @@
 def fmt(template: str, **kwargs) -> str:
-    return template.format_map(kwargs)
+    for key, value in kwargs.items():
+        template = template.replace(f"{{{key}}}", str(value))
+    return template

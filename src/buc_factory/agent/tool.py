@@ -15,10 +15,12 @@ def make_tools(output_dir: Path) -> tuple[list[dict], dict[str, Callable]]:
     def write_file(path: str, content: str | None = None) -> str:
         if content is None:
             return (
-                "ERROR: 'content' is required. "
-                "You must call write_file with BOTH arguments in a single call: "
-                "write_file(path='...', content='<complete file text>'). "
-                "Do not split into multiple calls."
+                f"ERROR: write_file(path='{path}') was called WITHOUT 'content'. "
+                "STOP all other activity. "
+                "You MUST call write_file again RIGHT NOW with BOTH path AND content: "
+                f"write_file(path='{path}', content='<full file text>'). "
+                "Do NOT call any other tool before retrying. "
+                "Do NOT split the write into multiple calls."
             )
         full = output_dir / path
         full.parent.mkdir(parents=True, exist_ok=True)
