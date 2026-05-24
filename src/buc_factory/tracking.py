@@ -67,10 +67,15 @@ def setup_mlflow(experiment_name: str = _EXPERIMENT) -> None:
     recreating if a stale path is detected. When MLFLOW_TRACKING_URI points to an
     HTTP server (e.g. Docker Compose), the server owns the artifact location and
     the local path check is skipped.
+
+    Note: if an experiment was previously created locally (with a host-path
+    artifact_location) and is now accessed via a Docker HTTP server, the artifact
+    paths in the DB must be updated manually or via the fix_mlflow_artifact_paths
+    helper below.
     """
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
     if not tracking_uri.startswith("http"):
-        artifact_root = (Path.cwd() / "mlflow_data" / "artifacts").as_uri()
+        artifact_root = (Path.cwd() / "data" / "mlflow" / "artifacts").as_uri()
         client = mlflow.MlflowClient()
 
         experiment = client.get_experiment_by_name(experiment_name)

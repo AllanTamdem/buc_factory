@@ -43,17 +43,17 @@ test-cov:
 .PHONY: api ui mlflow
 
 ui:
-	@uv run buc-factory-ui
+	@buc-factory-ui
 
 api:
 	@caffeinate -i buc-factory-api
 
 mlflow:
-	@uv run mlflow server \
+	uv run mlflow server \
 		--host 127.0.0.1 \
 		--port 5000 \
-		--backend-store-uri sqlite:///mlflow_data/mlflow.db \
-		--default-artifact-root mlflow_data/artifacts
+		--backend-store-uri sqlite:///data/mlflow/mlflow.db \
+		--default-artifact-root data/mlflow/artifacts
 
 # ── Docker ─────────────────────────────────────────────────────────────────────
 .PHONY: build up down logs
@@ -62,7 +62,7 @@ build:
 	docker compose build
 
 up:
-	docker compose up mlflow api -d
+	docker compose up mlflow api ui -d
 
 down:
 	docker compose down
@@ -118,7 +118,7 @@ help:
 	@echo ""
 	@echo "  Docker"
 	@echo "    build         docker compose build"
-	@echo "    up            Start mlflow + api in background"
+	@echo "    up            Start mlflow + api + ui in background"
 	@echo "    down          Stop containers"
 	@echo "    logs          Tail container logs"
 	@echo "    run ARGS=...  Run CLI container (pass --config / --output-dir)"

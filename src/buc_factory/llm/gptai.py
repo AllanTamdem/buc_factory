@@ -65,14 +65,19 @@ class OpenAILLM(BaseLLM):
         self,
         prompt: str,
         *,
+        system: str | None = None,
         model: str | None = None,
         max_tokens: int = 512,
     ) -> str:
         """Single-turn completion via the raw OpenAI SDK."""
         client = openai.OpenAI(api_key=self._api_key or None)
+        messages: list[dict] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
         response = client.chat.completions.create(
             model=model or self._model,
             max_completion_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
         )
         return response.choices[0].message.content or ""

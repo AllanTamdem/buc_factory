@@ -7,8 +7,10 @@ import logging
 from pathlib import Path
 
 import anthropic
-import openai
 import yaml
+
+from buc_factory.llm.claudeai import AnthropicLLM
+from buc_factory.llm.gptai import OpenAILLM
 
 LOGGER = logging.getLogger(__name__)
 
@@ -112,16 +114,18 @@ def score_simulation(
     )
 
     try:
-        client = anthropic.Anthropic()
-        response = client.messages.create(
-            model=_SCORER_MODEL,
-            max_tokens=_SCORER_MAX_TOKENS,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
+        llm = AnthropicLLM(model=_SCORER_MODEL, max_tokens=_SCORER_MAX_TOKENS)
+        result = llm.complete(user, system=system, max_tokens=_SCORER_MAX_TOKENS)
         LOGGER.info("  scoring complete via %s", _SCORER_MODEL)
-        return response.content[0].text
-    except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as exc:
+        return result
+    except (
+        anthropic.AuthenticationError,
+        anthropic.PermissionDeniedError,
+        anthropic.BadRequestError,
+    ) as exc:
+        if isinstance(exc, anthropic.BadRequestError) and "credit balance" not in str(exc).lower():
+            LOGGER.error("scoring LLM call failed: %s", exc, exc_info=True)
+            return None
         LOGGER.warning(
             "Anthropic unavailable for scoring (%s); falling back to %s",
             exc,
@@ -132,17 +136,10 @@ def score_simulation(
         return None
 
     try:
-        oa = openai.OpenAI()
-        response = oa.chat.completions.create(
-            model=_SCORER_OPENAI_FALLBACK,
-            max_completion_tokens=_SCORER_MAX_TOKENS,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        )
+        llm = OpenAILLM(model=_SCORER_OPENAI_FALLBACK, max_tokens=_SCORER_MAX_TOKENS)
+        result = llm.complete(user, system=system, max_tokens=_SCORER_MAX_TOKENS)
         LOGGER.info("  scoring complete via %s", _SCORER_OPENAI_FALLBACK)
-        return response.choices[0].message.content or None
+        return result or None
     except Exception as exc:
         LOGGER.error("scoring OpenAI fallback failed: %s", exc, exc_info=True)
         return None

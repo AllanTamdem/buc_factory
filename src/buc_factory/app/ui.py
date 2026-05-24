@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 import random
 import re
 import time
@@ -387,7 +388,9 @@ INDUSTRY_TEMPLATES: dict = {
 
 
 def _base() -> str:
-    return st.session_state.get("api_base", "http://localhost:8000").rstrip("/")
+    return st.session_state.get(
+        "api_base", os.environ.get("API_BASE_URL", "http://localhost:8000")
+    ).rstrip("/")
 
 
 def _api_get(path: str, params: dict | None = None) -> tuple:
@@ -1217,7 +1220,9 @@ def main() -> None:
         st.caption("API SERVER")
         api_base = st.text_input(
             "Server URL",
-            value=st.session_state.get("api_base", "http://localhost:8000"),
+            value=st.session_state.get(
+                "api_base", os.environ.get("API_BASE_URL", "http://localhost:8000")
+            ),
             label_visibility="collapsed",
             key="api_base_input",
         )
@@ -1294,7 +1299,7 @@ def run() -> None:
     import sys
 
     subprocess.run(
-        [sys.executable, "-m", "streamlit", "run", __file__, "--server.headless", "false"],
+        [sys.executable, "-m", "streamlit", "run", __file__] + sys.argv[1:],
         check=False,
     )
 

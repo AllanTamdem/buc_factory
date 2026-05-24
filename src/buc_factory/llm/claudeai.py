@@ -45,14 +45,18 @@ class AnthropicLLM(BaseLLM):
         self,
         prompt: str,
         *,
+        system: str | None = None,
         model: str | None = None,
         max_tokens: int = 512,
     ) -> str:
         """Single-turn completion via the raw Anthropic SDK (no autolog side-effects)."""
         client = anthropic.Anthropic(api_key=self._api_key or None)
-        response = client.messages.create(
-            model=model or self._model,
-            max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        kwargs: dict = {
+            "model": model or self._model,
+            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if system:
+            kwargs["system"] = system
+        response = client.messages.create(**kwargs)
         return response.content[0].text

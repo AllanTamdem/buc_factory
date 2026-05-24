@@ -107,16 +107,22 @@ def _openai_fallback(task_name: str, claude_model: str) -> str:
 def _is_anthropic_unavailable_err(exc: Exception) -> bool:
     """True for any Anthropic auth / config error, even when wrapped by LangChain.
 
-    Covers three distinct failure modes:
-    - Wrong key (HTTP 401)   → anthropic.AuthenticationError
-    - Billing / perms (403)  → anthropic.PermissionDeniedError
-    - Missing / empty key    → TypeError from the SDK ("Could not resolve authentication method")
+    Covers four distinct failure modes:
+    - Wrong key (HTTP 401)        → anthropic.AuthenticationError
+    - Billing / perms (HTTP 403)  → anthropic.PermissionDeniedError
+    - Insufficient credits (400)  → anthropic.BadRequestError ("credit balance is too low")
+    - Missing / empty key         → TypeError from the SDK
+                                    ("Could not resolve authentication method")
       or pydantic.ValidationError from langchain_anthropic ("ANTHROPIC_API_KEY not set")
     """
     _AUTH_FRAGMENTS = ("authentication method", "api_key", "anthropic_api_key", "x-api-key")
     cause: Exception | None = exc
     for _ in range(5):
         if isinstance(cause, (_anthropic.AuthenticationError, _anthropic.PermissionDeniedError)):
+            return True
+        if isinstance(cause, _anthropic.BadRequestError) and (
+            "credit balance" in str(cause).lower()
+        ):
             return True
         if isinstance(cause, (TypeError, ValueError)):
             msg = str(cause).lower()

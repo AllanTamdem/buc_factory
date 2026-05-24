@@ -160,7 +160,7 @@ System and task prompts live in `src/buc_factory/conf/prompt_templates.yml`. Pro
 git clone <repo>
 cd buc_factory
 
-uv sync
+make install-dev
 cp .env.example .env   # add your ANTHROPIC_API_KEY and OPENAI_API_KEY
 ```
 
@@ -177,11 +177,11 @@ OPENAI_API_KEY=sk-...
 ### CLI
 
 ```bash
-# New run — outputs go to MLflow, no local directory kept
+# New run — outputs tracked in MLflow, no local directory kept
 uv run python -m buc_factory \
   --config conf/industry_spec/p&c_insurance_france.yml
 
-# Persist outputs locally and allow resume (--output-dir is optional)
+# Persist outputs locally (enables resume on interruption)
 uv run python -m buc_factory \
   --config conf/industry_spec/p&c_insurance_france.yml \
   --output-dir data/run_001
@@ -196,40 +196,41 @@ Logs are written to both the console and `log/agent.log` (rotating, 10 MB per fi
 
 ---
 
-### Backfill search index
-
-If you have existing MLflow runs that predate the search feature, index them in one shot:
-
-```bash
-buc-factory-backfill
-```
-
-Only successfully completed runs (`FINISHED` status) are indexed. Already-indexed runs are skipped, so the command is safe to re-run. Requires `MLFLOW_TRACKING_URI` and `OPENAI_API_KEY` in the environment.
-
----
-
 ### API server
 
 ```bash
-buc-factory-api
-# or
-uvicorn buc_factory.app.api:app --reload
+make api          # local (macOS: keeps the machine awake via caffeinate)
+# or directly:
+uv run buc-factory-api
 ```
 
-The server starts on `http://localhost:8000`. Interactive docs are available at **`http://localhost:8000/docs`**.
+The server starts on `http://localhost:8000`. Interactive docs: **`http://localhost:8000/docs`**.
 
-Multiple runs can execute concurrently — each background thread keeps its own task log (via thread-local storage), so token counts and costs never bleed between requests. Every log line written during a run is tagged with `[run_id]` to make multi-run log files readable.
+Multiple runs execute concurrently — each background thread keeps its own task log (via thread-local storage), so token counts and costs never bleed between requests. Every log line is tagged with `[run_id]`.
 
 #### Endpoints
+
+**Runs**
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/runs` | List all runs from MLflow with status, parameters, and scenario |
-| `GET` | `/runs/search?q=…&limit=…` | Semantic search over completed runs (embedding similarity) |
 | `POST` | `/runs` | Submit a new agent run (returns `202` immediately) |
-| `GET` | `/runs/{run_id}` | Run details from MLflow: status, parameters, scenario |
-| `GET` | `/runs/{run_id}/recruiter.zip` | Download `brief/` + `solution/` (from MLflow artifacts) |
-| `GET` | `/runs/{run_id}/candidate.zip` | Download `brief/` + `starter/` (from MLflow artifacts, without `generate_data.py`) |
+| `GET` | `/runs/{run_id}` | Run details: status, parameters, scenario |
+| `GET` | `/runs/{run_id}/brief` | Candidate brief as plain-text markdown |
+| `GET` | `/runs/{run_id}/solution` | Recruiter solution as plain-text markdown |
+| `GET` | `/runs/{run_id}/recruiter.zip` | Download `brief/` + `solution/` |
+| `GET` | `/runs/{run_id}/candidate.zip` | Download `brief/` + `starter/` (without `generate_data.py`) |
+| `GET` | `/runs/search?q=…&limit=…` | Semantic search over completed runs |
+
+**Candidate simulations**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/simulations` | Simulate a candidate completing an assessment (returns `202`) |
+| `GET` | `/simulations/{sim_id}` | Simulation status, mode, proficiency |
+| `GET` | `/simulations/{sim_id}/scoring` | Scoring markdown for a completed simulation |
+| `GET` | `/simulations/{sim_id}/solution.zip` | Download the filled-in starter project |
 
 #### Example: submit a run
 
@@ -262,10 +263,7 @@ curl -X POST http://localhost:8000/runs \
 #### Poll status and download
 
 ```bash
-# Poll until "done"
 curl http://localhost:8000/runs/run_010
-
-# Download packages once complete
 curl -O http://localhost:8000/runs/run_010/recruiter.zip
 curl -O http://localhost:8000/runs/run_010/candidate.zip
 ```
@@ -276,73 +274,89 @@ curl -O http://localhost:8000/runs/run_010/candidate.zip
 curl "http://localhost:8000/runs/search?q=data+scientist+retail&limit=5"
 ```
 
-Results are ranked by cosine similarity. Before embedding, the query is expanded into a synthetic run description via `gpt-4o-mini` (HyDE — Hypothetical Document Embeddings), which aligns the query vector with the indexed document space and improves recall for short or ambiguous queries. Pass `use_hyde=False` to embed the raw query instead (one fewer LLM call, lower latency). Queries work in English or French. Embeddings are stored in `mlflow_data/embeddings.db` and are only created for successfully completed runs.
+Results are ranked by cosine similarity. The query is first expanded into a synthetic run description via HyDE (Hypothetical Document Embeddings) using `gpt-4o-mini`, which aligns the query vector with the indexed document space and improves recall for short or ambiguous queries. Pass `use_hyde=False` to embed the raw query instead. Embeddings are stored in `data/embeddings.db`.
+
+---
+
+### Backfill search index
+
+Index existing MLflow runs that predate the search feature:
+
+```bash
+uv run buc-factory-backfill
+```
+
+Only `FINISHED` runs are indexed; already-indexed runs are skipped. Requires `MLFLOW_TRACKING_URI` and `OPENAI_API_KEY`.
 
 ---
 
 ### MLflow UI
 
-Start the tracking server before (or after) running the agent:
-
 ```bash
-bash .vscode/launch_mlflow.sh
+make mlflow
 # then open http://127.0.0.1:5000
 ```
 
-The server uses a local SQLite backend (`mlflow_data/mlflow.db`) and stores artifacts under `mlflow_data/artifacts/`. Both paths are created automatically on first use.
+Uses a local SQLite backend (`data/mlflow/mlflow.db`) with artifacts under `data/mlflow/artifacts/`. Both paths are created automatically on first use.
+
+---
+
+### Streamlit UI
+
+A lightweight validation UI ships with the project for browsing runs and testing the API:
+
+```bash
+make ui
+# then open http://localhost:8501
+```
 
 ---
 
 ### Docker
 
+Build the image:
+
+```bash
+make build
+```
+
 **CLI (one-shot run):**
 
 ```bash
-docker build -t buc-factory .
-
-docker run --env-file .env \
-  -v $(pwd)/conf:/app/conf \
-  -v $(pwd)/data:/app/data \
-  -v $(pwd)/log:/app/log \
-  buc-factory \
-  uv run python -m buc_factory \
-    --config conf/industry_spec/p&c_insurance_france.yml \
-    --output-dir data/run_001
-```
-
-**API server:**
-
-```bash
-docker run --env-file .env \
-  -p 8000:8000 \
-  -v $(pwd)/conf:/app/conf \
-  -v $(pwd)/log:/app/log \
-  buc-factory \
-  buc-factory-api
+make run ARGS="--config conf/industry_spec/p&c_insurance_france.yml --output-dir data/run_001"
 ```
 
 ---
 
 ### Docker Compose
 
-Compose provides three services: `mlflow` (tracking server), `api` (HTTP server), and `buc_factory` (CLI one-shot runner).
+Compose provides four services: `mlflow` (tracking server on `:5001`), `api` (HTTP server on `:8000`), `ui` (Streamlit on `:8501`), and `buc_factory` (CLI runner, opt-in via `--profile cli`).
 
 ```bash
-# Start MLflow + API server
-docker compose up mlflow api -d
-
-# API is now available at http://localhost:8000
-# MLflow UI at http://localhost:5001
-
-# Run a one-shot CLI assessment
-docker compose --profile cli run --rm buc_factory \
-  --config conf/industry_spec/p&c_insurance_france.yml \
-  --output-dir data/run_001
+make build          # build the buc-factory image
+make up             # start mlflow + api + ui in the background
+make logs           # tail logs from all services
+make down           # stop and remove containers
+make clean-docker   # full teardown including image and volumes
 ```
 
-Add `--build` on first run or after code changes: `docker compose up --build mlflow api -d`.
+After `make up`:
 
-All services inherit `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` from `.env` and connect to MLflow over the internal Docker network (`http://mlflow:5000`).
+| Service | URL |
+|---------|-----|
+| API | `http://localhost:8000` — docs at `/docs` |
+| Streamlit UI | `http://localhost:8501` |
+| MLflow | `http://localhost:5001` |
+
+**API access from inside the `ui` container** uses the internal Docker hostname `http://api:8000` (set via `API_BASE_URL` environment variable). From the host or any external client, use `http://localhost:8000`.
+
+**Run a one-shot CLI assessment via Compose:**
+
+```bash
+make run ARGS="--config conf/industry_spec/p&c_insurance_france.yml --output-dir data/run_001"
+```
+
+Requires `make up` to be running (the CLI container connects to the MLflow sidecar). Rebuild after code changes: `make build && make up`.
 
 ---
 
@@ -360,14 +374,16 @@ buc_factory/
 │   ├── __main__.py             # CLI entry point, MLflow run, state loading, resume logic
 │   ├── tracking.py             # MLflow helpers: metrics, artifacts, prompt registry, LLM judge
 │   ├── app/
-│   │   ├── api.py              # FastAPI app: run submission, catalog browsing, search, zip download
+│   │   ├── api.py              # FastAPI app: run submission, catalog, simulations, zip download
+│   │   ├── ui.py               # Streamlit validation UI
 │   │   ├── backfill.py         # one-shot CLI to index existing MLflow runs into the search DB
 │   │   ├── models.py           # Pydantic I/O models: RunRequest, RunResponse, SearchResult, …
-│   │   └── search.py           # embedding-based semantic search: HyDE query expansion, vectorized cosine similarity, OpenAI text-embedding-3-small, SQLite index
+│   │   └── search.py           # embedding-based semantic search: HyDE, cosine similarity, SQLite
 │   ├── agent/
 │   │   ├── entity.py           # BucState (TypedDict) and PLAN (task order)
 │   │   ├── graph.py            # LangGraph nodes: prepare_task, run_task, validate_task, fail_task
 │   │   ├── prompting.py        # builds system prompt and per-task prompts from templates
+│   │   ├── scorer.py           # score_simulation(): LLM-based scoring via AnthropicLLM / OpenAILLM
 │   │   ├── tool.py             # make_tools() — write_file, read_file, list_files, run_python, ...
 │   │   └── validator.py        # validate_and_extract() — one validator per task
 │   └── llm/
@@ -375,17 +391,15 @@ buc_factory/
 │       ├── claudeai.py         # AnthropicLLM — ChatAnthropic + cache_control system message
 │       └── gptai.py            # OpenAILLM — ChatOpenAI + Anthropic→OpenAI tool schema adapter
 │
-├── mlflow_data/
-│   ├── mlflow.db               # SQLite tracking backend (gitignored)
+├── data/
+│   ├── mlflow/
+│   │   ├── mlflow.db           # SQLite tracking backend (gitignored)
+│   │   └── artifacts/          # run artifacts: prompts, outputs, task_summary.md (gitignored)
 │   ├── embeddings.db           # run embedding index for semantic search (gitignored)
-│   └── artifacts/              # run artifacts: prompts, outputs, task_summary.md (gitignored)
+│   └── run_*/                  # generated output dirs (gitignored)
 │
-├── notebook/
-│   └── claude_ai.ipynb         # standalone examples of AnthropicLLM usage
-│
-├── data/                       # generated output dirs (gitignored)
-└── log/                        # gitignored
-    └── agent.log               # rotating run logs (10 MB / file, 5 backups); API logs tag each line with [run_id]
+└── log/
+    └── agent.log               # rotating run logs (10 MB / file, 5 backups); lines tagged with [run_id]
 ```
 
 ---
@@ -403,7 +417,9 @@ until: no tool calls | done_tool fired | max_steps reached
 
 Returns `(list[BaseMessage], total_input_tokens, total_output_tokens)` — token counts are summed across every model call in the loop (including retries) and forwarded to MLflow.
 
-Each task is routed to a specific model by `_TASK_MODEL` in `graph.py`; the provider is derived from the model name (`startswith("claude")` → Anthropic, otherwise → OpenAI). `AnthropicLLM` passes tool schemas as-is (Anthropic format) and adds `cache_control` to the system message. `OpenAILLM` converts schemas to OpenAI function-calling format and only passes `temperature` for GPT-4.x / GPT-3.x models (the sole OpenAI models that accept it).
+Each task is routed to a specific model by `_TASK_MODEL` in `graph.py`; the provider is derived from the model name (`startswith("claude")` → Anthropic, otherwise → OpenAI). `AnthropicLLM` passes tool schemas as-is (Anthropic format) and adds `cache_control` to the system message. `OpenAILLM` converts schemas to OpenAI function-calling format and only passes `temperature` for GPT-4.x / GPT-3.x models.
+
+Both classes expose a `complete(prompt, *, system, model, max_tokens)` method for single-turn completions — used by the scorer and other non-agentic callers.
 
 #### Automatic Anthropic → OpenAI fallback
 
@@ -415,7 +431,7 @@ If a Claude call fails with an authentication or billing error (wrong/missing `A
 | `claude-sonnet-4-6` | `gpt-5.4` |
 | `claude-opus-4-7` | `gpt-5.5` |
 
-`generate_starter` uses `gpt-5.3-codex` regardless of which Claude tier it replaces (per-task override). The actual model used is recorded per task in `task_summary.md` and in MLflow metrics, so cost estimates remain accurate even on a fallback run.
+`generate_starter` uses `gpt-5.3-codex` regardless of which Claude tier it replaces. The actual model used is recorded per task in `task_summary.md` and in MLflow metrics.
 
 Token budgets by task:
 - Default tasks: 8 000 tokens

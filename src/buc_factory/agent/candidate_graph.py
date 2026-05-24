@@ -168,6 +168,10 @@ def _is_anthropic_auth_error(exc: Exception) -> bool:
     for _ in range(5):
         if isinstance(cause, (_anthropic.AuthenticationError, _anthropic.PermissionDeniedError)):
             return True
+        if isinstance(cause, _anthropic.BadRequestError) and (
+            "credit balance" in str(cause).lower()
+        ):
+            return True
         if isinstance(cause, (TypeError, ValueError)) and any(
             f in str(cause).lower() for f in _AUTH_FRAGMENTS
         ):

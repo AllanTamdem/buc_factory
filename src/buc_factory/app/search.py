@@ -14,7 +14,7 @@ from buc_factory.llm.gptai import OpenAILLM
 LOGGER = logging.getLogger(__name__)
 
 _EMBED_MODEL = "text-embedding-3-small"
-_DB_PATH = Path(os.environ.get("EMBEDDINGS_DB_PATH", "mlflow_data/embeddings.db"))
+_DB_PATH = Path(os.environ.get("EMBEDDINGS_DB_PATH", "data/embeddings.db"))
 
 _embed_client: OpenAI | None = None
 _llm: OpenAILLM | None = None
