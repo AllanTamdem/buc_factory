@@ -1,5 +1,7 @@
 """LangChain-backed OpenAI LLM for the buc_factory agent."""
 
+from typing import Any, cast
+
 import openai
 from langchain_core.messages import BaseMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -12,7 +14,7 @@ def _supports_temperature(model: str) -> bool:
     return model.startswith("gpt-4") or model.startswith("gpt-3")
 
 
-def _to_openai_tools(schemas: list[dict]) -> list[dict]:
+def _to_openai_tools(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert Anthropic tool schema format to OpenAI function-calling format."""
     return [
         {
@@ -47,15 +49,15 @@ class OpenAILLM(BaseLLM):
     def _get_client(self, model: str, max_tokens: int) -> ChatOpenAI:
         key = (model, max_tokens)
         if key not in self._client_cache:
-            kwargs: dict = {"model": model, "max_tokens": max_tokens}
+            kwargs: dict[str, Any] = {"model": model, "max_tokens": max_tokens}
             if self._api_key:
                 kwargs["api_key"] = self._api_key
             if _supports_temperature(model):
                 kwargs["temperature"] = 0.7
             self._client_cache[key] = ChatOpenAI(**kwargs)
-        return self._client_cache[key]
+        return cast(ChatOpenAI, self._client_cache[key])
 
-    def _prepare_tools(self, tools: list[dict]) -> list[dict]:
+    def _prepare_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return _to_openai_tools(tools)
 
     def _make_system_message(self, system: str) -> BaseMessage:
@@ -71,7 +73,7 @@ class OpenAILLM(BaseLLM):
     ) -> str:
         """Single-turn completion via the raw OpenAI SDK."""
         client = openai.OpenAI(api_key=self._api_key or None)
-        messages: list[dict] = []
+        messages: list[Any] = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})

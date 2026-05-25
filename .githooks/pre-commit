@@ -7,6 +7,9 @@ uv run ruff check src/ tests/
 echo "▶ ruff format --check ..."
 uv run ruff format --check src/ tests/
 
+echo "▶ mypy ..."
+uv run mypy src/
+
 echo "▶ pytest ..."
 uv run pytest tests/ -q --tb=short
 

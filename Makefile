@@ -25,10 +25,10 @@ format:
 format-check:
 	uv run ruff format --check src/ tests/
 
-# typecheck:
-# 	uv run mypy src/
+typecheck:
+	uv run mypy src/
 
-check: lint format-check # typecheck
+check: lint format-check typecheck
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
 .PHONY: test test-cov

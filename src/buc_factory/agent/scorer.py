@@ -5,10 +5,12 @@ from __future__ import annotations
 import importlib.resources
 import logging
 from pathlib import Path
+from typing import Any, cast
 
 import anthropic
 import yaml
 
+from buc_factory.llm.base import BaseLLM
 from buc_factory.llm.claudeai import AnthropicLLM
 from buc_factory.llm.gptai import OpenAILLM
 
@@ -19,16 +21,19 @@ _SCORER_OPENAI_FALLBACK = "gpt-5.5"
 _SCORER_MAX_TOKENS = 4096
 _MAX_SECTION_CHARS = 12_000  # per content block sent to the LLM
 
-_PROMPTS: dict | None = None
+_PROMPTS: dict[str, Any] | None = None
 
 
-def _prompts() -> dict:
+def _prompts() -> dict[str, Any]:
     global _PROMPTS
     if _PROMPTS is None:
-        _PROMPTS = yaml.safe_load(
-            importlib.resources.files("buc_factory")
-            .joinpath("conf/sim_prompt_templates.yml")
-            .read_text(encoding="utf-8")
+        _PROMPTS = cast(
+            dict[str, Any],
+            yaml.safe_load(
+                importlib.resources.files("buc_factory")
+                .joinpath("conf/sim_prompt_templates.yml")
+                .read_text(encoding="utf-8")
+            ),
         )
     return _PROMPTS
 
@@ -72,12 +77,10 @@ def _collect_ipynb_work(starter_dir: Path) -> str:
     return f"### notebook.ipynb\n```json\n{_truncate(nb.read_text())}\n```"
 
 
-def score_simulation(
+def score_submission(
     output_dir: Path,
     recruiter_solution: str,
     deliverable_format: str,
-    mode: str,
-    proficiency: float,
 ) -> str | None:
     """Score the simulation output against the recruiter solution.
 
@@ -100,21 +103,16 @@ def score_simulation(
 
     brief = _truncate(brief_path.read_text(encoding="utf-8"))
     ref = _truncate(recruiter_solution)
-    prof_desc = (
-        "perfect (expert)" if mode == "perfect" else f"{int(proficiency * 100)}% proficiency"
-    )
-
     p = _prompts()["scoring"]
     system = p["system"]
     user = p["user"].format(
         brief=brief,
         recruiter_solution=ref,
         sim_work=sim_work,
-        prof_desc=prof_desc,
     )
 
     try:
-        llm = AnthropicLLM(model=_SCORER_MODEL, max_tokens=_SCORER_MAX_TOKENS)
+        llm: BaseLLM = AnthropicLLM(model=_SCORER_MODEL, max_tokens=_SCORER_MAX_TOKENS)
         result = llm.complete(user, system=system, max_tokens=_SCORER_MAX_TOKENS)
         LOGGER.info("  scoring complete via %s", _SCORER_MODEL)
         return result

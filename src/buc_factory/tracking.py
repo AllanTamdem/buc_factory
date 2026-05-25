@@ -5,6 +5,7 @@ import logging
 import os
 import threading
 from pathlib import Path
+from typing import Any, cast
 
 import mlflow
 import mlflow.genai
@@ -20,10 +21,10 @@ _EXPERIMENT = "buc-factory"
 _tls = threading.local()
 
 
-def _get_task_log() -> list[dict]:
+def _get_task_log() -> list[dict[str, Any]]:
     if not hasattr(_tls, "log"):
         _tls.log = []
-    return _tls.log
+    return cast(list[dict[str, Any]], _tls.log)
 
 
 def set_run_id(run_id: str) -> None:
@@ -326,6 +327,8 @@ def _register_judge_prompt() -> None:
                 model_name=_JUDGE_MODEL,
                 max_tokens=1024,
                 temperature=0.0,
+                top_p=None,
+                top_k=None,
             ),
         )
     except Exception as exc:

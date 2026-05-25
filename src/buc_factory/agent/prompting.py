@@ -1,23 +1,27 @@
 import importlib.resources
 import json
+from typing import Any, cast
 
 import yaml
 
 from ..utils import fmt
 from .entity import DomainConfig
 
-_PROMPTS_CACHE: dict[str, dict] = {}
+_PROMPTS_CACHE: dict[str, dict[str, Any]] = {}
 
 
-def _load_yaml(fname: str) -> dict:
-    return yaml.safe_load(
-        importlib.resources.files("buc_factory")
-        .joinpath(f"conf/{fname}")
-        .read_text(encoding="utf-8")
+def _load_yaml(fname: str) -> dict[str, Any]:
+    return cast(
+        dict[str, Any],
+        yaml.safe_load(
+            importlib.resources.files("buc_factory")
+            .joinpath(f"conf/{fname}")
+            .read_text(encoding="utf-8")
+        ),
     )
 
 
-def _deep_merge(base: dict, patch: dict) -> dict:
+def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     result = dict(base)
     for key, val in patch.items():
         if key in result and isinstance(result[key], dict) and isinstance(val, dict):
@@ -27,7 +31,7 @@ def _deep_merge(base: dict, patch: dict) -> dict:
     return result
 
 
-def _prompts(provider: str = "claude") -> dict:
+def _prompts(provider: str = "claude") -> dict[str, Any]:
     if provider not in _PROMPTS_CACHE:
         base = _load_yaml("prompt_templates.yml")
         if provider != "claude":
@@ -47,7 +51,7 @@ def _prompts(provider: str = "claude") -> dict:
 
 def raw_system_template(provider: str = "claude") -> str:
     """Return the unrendered system prompt template (for versioning in MLflow)."""
-    return _prompts(provider)["system"]
+    return str(_prompts(provider)["system"])
 
 
 def build_system(cfg: DomainConfig, provider: str = "claude") -> str:
@@ -82,7 +86,7 @@ def _prep_layer(tool: str) -> str:
     return "data preparation layer"
 
 
-def _bootstrap_prompt(cfg: DomainConfig, p: dict) -> str:
+def _bootstrap_prompt(cfg: DomainConfig, p: dict[str, Any]) -> str:
     """Build the bootstrap_domain prompt for the infer (partial/no-config) path only.
 
     The fully-specified path (both dimensions and entities set) bypasses the LLM
@@ -103,7 +107,9 @@ def _bootstrap_prompt(cfg: DomainConfig, p: dict) -> str:
     )
 
 
-def _starter_prompt(cfg: DomainConfig, p: dict, data_schema_json: str | None = None) -> str:
+def _starter_prompt(
+    cfg: DomainConfig, p: dict[str, Any], data_schema_json: str | None = None
+) -> str:
     tool = cfg.tool.lower()
     deliverable_fmt = cfg.deliverable_format.upper()
     schema = data_schema_json or "(not yet available)"
@@ -120,7 +126,7 @@ def task_prompt(
     name: str,
     cfg: DomainConfig,
     retry_feedback: str | None,
-    rolled: dict | None = None,
+    rolled: dict[str, Any] | None = None,
     scenario_json: str | None = None,
     bootstrap_json: str | None = None,
     data_schema_json: str | None = None,

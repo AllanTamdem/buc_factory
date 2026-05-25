@@ -1,0 +1,98 @@
+name: Build & Package Stack
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Format check (ruff)
+        run: uv run ruff format --check .
+
+      - name: Type check (mypy)
+        run: uv run mypy src/
+
+      - name: Tests (pytest)
+        run: uv run pytest --cov=buc_factory --cov-report=term-missing
+
+  package:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # required to upload release assets
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          tags: buc-factory:latest
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Pull mlflow image
+        run: docker pull ghcr.io/mlflow/mlflow:v3.12.0
+
+      - name: Assemble release bundle
+        run: |
+          mkdir -p _release
+
+          # Save both images for fully offline / air-gapped deployment
+          docker save buc-factory:latest -o _release/buc-factory-image.tar
+          docker save ghcr.io/mlflow/mlflow:v3.12.0 -o _release/mlflow-image.tar
+
+          # compose: strip the `build: .` line so users work from the pre-built image
+          sed '/^    build:/d' compose.yaml > _release/compose.yml
+
+          # .env template — no real credentials
+          cp .github/.env.template _release/.env
+
+          # Deployment guide becomes the README inside the archive
+          cp DEPLOY.md _release/README.md
+
+          tar -czf buc-factory-stack.tar.gz -C _release .
+          echo "Archive size: $(du -sh buc-factory-stack.tar.gz | cut -f1)"
+
+      - name: Upload artifact (branch / PR builds)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: buc-factory-stack
+          path: buc-factory-stack.tar.gz
+          retention-days: 7
+
+      - name: Create GitHub Release and upload bundle (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: buc-factory-stack.tar.gz
+          generate_release_notes: true

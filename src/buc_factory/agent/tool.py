@@ -4,13 +4,14 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 # ──────────────────────────────────────────────────────────────────
 # Tools
 # ──────────────────────────────────────────────────────────────────
 
 
-def make_tools(output_dir: Path) -> tuple[list[dict], dict[str, Callable]]:
+def make_tools(output_dir: Path) -> tuple[list[dict[str, Any]], dict[str, Callable[..., Any]]]:
 
     def write_file(path: str, content: str | None = None) -> str:
         if content is None:
@@ -99,9 +100,12 @@ def make_tools(output_dir: Path) -> tuple[list[dict], dict[str, Callable]]:
         return f"acknowledged: {summary}"
 
     def _tool(
-        name: str, description: str, properties: dict, required: list[str] | None = None
-    ) -> dict:
-        schema: dict = {"type": "object", "properties": properties}
+        name: str,
+        description: str,
+        properties: dict[str, Any],
+        required: list[str] | None = None,
+    ) -> dict[str, Any]:
+        schema: dict[str, Any] = {"type": "object", "properties": properties}
         if required:
             schema["required"] = required
         return {"name": name, "description": description, "input_schema": schema}
@@ -192,7 +196,7 @@ def make_tools(output_dir: Path) -> tuple[list[dict], dict[str, Callable]]:
         ),
     ]
 
-    dispatch = {
+    dispatch: dict[str, Callable[..., Any]] = {
         "write_file": write_file,
         "read_file": read_file,
         "list_files": list_files,

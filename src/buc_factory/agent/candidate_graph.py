@@ -13,12 +13,12 @@ import importlib.resources
 import logging
 import time
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 import anthropic as _anthropic
 import yaml
 from langchain_core.messages import BaseMessage, HumanMessage
-from langgraph.graph import END, StateGraph
+from langgraph.graph import StateGraph
 from langgraph.types import Command
 
 from ..llm.claudeai import AnthropicLLM
@@ -56,16 +56,19 @@ class CandidateState(TypedDict):
 
 # ── prompting ──────────────────────────────────────────────────────
 
-_SIM_PROMPTS: dict | None = None
+_SIM_PROMPTS: dict[str, Any] | None = None
 
 
-def _sim_prompts() -> dict:
+def _sim_prompts() -> dict[str, Any]:
     global _SIM_PROMPTS
     if _SIM_PROMPTS is None:
-        _SIM_PROMPTS = yaml.safe_load(
-            importlib.resources.files("buc_factory")
-            .joinpath("conf/sim_prompt_templates.yml")
-            .read_text(encoding="utf-8")
+        _SIM_PROMPTS = cast(
+            dict[str, Any],
+            yaml.safe_load(
+                importlib.resources.files("buc_factory")
+                .joinpath("conf/sim_prompt_templates.yml")
+                .read_text(encoding="utf-8")
+            ),
         )
     return _SIM_PROMPTS
 
@@ -188,7 +191,7 @@ def build_candidate_graph(
     mode: str,
     proficiency: float,
     deliverable_format: str,
-):
+) -> Any:
     """Compile and return a LangGraph for simulating a candidate solving an assessment.
 
     The graph runs a single agentic task with up to SIM_MAX_RETRIES retries.
@@ -284,7 +287,7 @@ def build_candidate_graph(
         elapsed = time.perf_counter() - _task_start[0]
         LOGGER.info("  validation: %s %s (%.1fs)", "✓" if ok else "✗", msg, elapsed)
         if ok:
-            return Command(goto=END)
+            return Command(goto="__end__")
         new_retry = state["retry_count"] + 1
         if new_retry >= _SIM_MAX_RETRIES:
             LOGGER.error("  max retries reached — failing simulation")
@@ -305,7 +308,7 @@ def build_candidate_graph(
             _SIM_MAX_RETRIES,
             state.get("validation_error"),
         )
-        return Command(goto=END, update={"failed": True})
+        return Command(goto="__end__", update={"failed": True})
 
     builder = StateGraph(CandidateState)
     builder.add_node("prepare_simulate", prepare_simulate)

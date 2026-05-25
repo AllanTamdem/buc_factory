@@ -43,6 +43,7 @@ services:
     container_name: buc-factory-ui
     environment:
       API_BASE_URL: "http://api:8000"
+      API_PUBLIC_URL: "http://localhost:8000"
     command:
       - .venv/bin/buc-factory-ui
       - --server.headless=true

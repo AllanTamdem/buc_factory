@@ -30,16 +30,17 @@ import shutil
 import tempfile
 import time
 import zipfile
+from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Annotated, Any, cast
 
 import mlflow
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -122,7 +123,7 @@ _id_lock = Lock()
 _sim_status: dict[str, str] = {}  # sim_id -> "queued"|"running"|"done"|"failed"
 _sim_mlflow_ids: dict[str, str] = {}  # sim_id -> MLflow run UUID
 _sim_source_run: dict[str, str] = {}  # sim_id -> source run_id
-_sim_meta: dict[str, dict] = {}  # sim_id -> {mode, proficiency, seed}
+_sim_meta: dict[str, dict[str, Any]] = {}  # sim_id -> {mode, proficiency, seed}
 _sim_counter = 0
 _sim_lock = Lock()
 
@@ -182,7 +183,7 @@ def _init_sim_counter() -> None:
 
 
 @asynccontextmanager
-async def _lifespan(app: FastAPI):  # noqa: ARG001
+async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: ARG001
     setup_mlflow()
     _init_run_counter()
     _init_sim_counter()
@@ -246,7 +247,7 @@ def _extract_parameters(run: Any) -> RunParameters:
     )
 
 
-def _fetch_scenario(mlflow_run_id: str) -> dict | None:
+def _fetch_scenario(mlflow_run_id: str) -> dict[str, Any] | None:
     """Download and parse outputs/scenario.json from MLflow artifacts."""
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -255,7 +256,7 @@ def _fetch_scenario(mlflow_run_id: str) -> dict | None:
                 artifact_path="outputs/scenario.json",
                 dst_path=tmpdir,
             )
-            return json.loads(Path(local).read_text())
+            return cast(dict[str, Any], json.loads(Path(local).read_text()))
     except Exception:
         return None
 
@@ -293,7 +294,7 @@ def _resolve_mlflow_run(run_id: str) -> str:
     mlflow_run = _find_mlflow_run(run_id)
     if mlflow_run is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found.")
-    return mlflow_run.info.run_id
+    return str(mlflow_run.info.run_id)
 
 
 def _build_zip_from_mlflow(
@@ -393,7 +394,7 @@ def _resolve_sim_run(sim_id: str) -> str:
     mlflow_run = _find_sim_mlflow_run(sim_id)
     if mlflow_run is None:
         raise HTTPException(status_code=404, detail=f"Simulation '{sim_id}' not found.")
-    return mlflow_run.info.run_id
+    return str(mlflow_run.info.run_id)
 
 
 def _execute_simulation(
@@ -517,7 +518,7 @@ def _execute_simulation_inner(
                 # Score the simulation against the recruiter solution
                 if not failed:
                     try:
-                        from ..agent.scorer import score_simulation
+                        from ..agent.scorer import score_submission
 
                         with tempfile.TemporaryDirectory() as score_tmp:
                             sol_local = mlflow.artifacts.download_artifacts(
@@ -527,12 +528,10 @@ def _execute_simulation_inner(
                             )
                             recruiter_solution = Path(sol_local).read_text(encoding="utf-8")
 
-                        scoring_md = score_simulation(
+                        scoring_md = score_submission(
                             output_dir=output_dir,
                             recruiter_solution=recruiter_solution,
                             deliverable_format=deliverable_format,
-                            mode=mode,
-                            proficiency=proficiency,
                         )
                         if scoring_md:
                             score_path = output_dir / "scoring.md"
@@ -627,23 +626,23 @@ def list_runs() -> RunListResponse:
 
     mlflow_by_run_id: dict[str, Any] = {}
     if experiment is not None:
-        for mlflow_run in client.search_runs(
+        for _mlf_run in client.search_runs(
             experiment_ids=[experiment.experiment_id],
             order_by=["attributes.start_time ASC"],
             max_results=1000,
         ):
-            api_run_id = mlflow_run.data.tags.get("api_run_id")
+            api_run_id = _mlf_run.data.tags.get("api_run_id")
             if api_run_id:
-                mlflow_by_run_id[api_run_id] = mlflow_run
+                mlflow_by_run_id[api_run_id] = _mlf_run
 
     # Include queued runs not yet registered in MLflow
     all_run_ids = sorted(set(mlflow_by_run_id.keys()) | set(_run_status.keys()))
 
-    def _fetch_for(rid: str) -> tuple[str, dict | None]:
+    def _fetch_for(rid: str) -> tuple[str, dict[str, Any] | None]:
         mlflow_run = mlflow_by_run_id.get(rid)
-        return rid, _fetch_scenario(mlflow_run.info.run_id) if mlflow_run else None
+        return rid, _fetch_scenario(str(mlflow_run.info.run_id)) if mlflow_run else None
 
-    scenarios: dict[str, dict | None] = {}
+    scenarios: dict[str, dict[str, Any] | None] = {}
     if all_run_ids:
         with ThreadPoolExecutor(max_workers=min(8, len(all_run_ids))) as pool:
             scenarios = dict(pool.map(_fetch_for, all_run_ids))
@@ -778,6 +777,86 @@ def download_candidate(run_id: str) -> StreamingResponse:
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename=candidate_{run_id}.zip"},
     )
+
+
+@app.post("/runs/{run_id}/score", response_class=PlainTextResponse)
+async def score_run(run_id: str, solution: Annotated[UploadFile, File(...)]) -> str:
+    """Score a candidate-submitted solution ZIP against the recruiter answer key.
+
+    The ZIP must contain the completed project at its root (PBIP or IPYNB layout),
+    matching the deliverable_format of the run.
+    """
+    from ..agent.scorer import score_submission
+
+    mlflow_run_id = _resolve_mlflow_run(run_id)
+    mlflow_run = _find_mlflow_run(run_id)
+    if mlflow_run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found.")
+
+    deliverable_format = mlflow_run.data.params.get("deliverable_format", "PBIP")
+
+    zip_bytes = await solution.read()
+    if not zip_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    import zipfile as _zipfile
+
+    if not _zipfile.is_zipfile(io.BytesIO(zip_bytes)):
+        raise HTTPException(status_code=400, detail="Uploaded file is not a valid ZIP.")
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            starter_dir = output_dir / "starter"
+            starter_dir.mkdir()
+
+            with _zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                zf.extractall(starter_dir)
+
+            # If the ZIP wrapped everything in a single top-level folder, strip it
+            # so scorer always sees files directly under starter/.
+            top_level = [p for p in starter_dir.iterdir() if not p.name.startswith("__")]
+            if len(top_level) == 1 and top_level[0].is_dir():
+                for child in list(top_level[0].iterdir()):
+                    child.rename(starter_dir / child.name)
+                top_level[0].rmdir()
+
+            # Brief
+            with tempfile.TemporaryDirectory() as artdir:
+                local_brief = mlflow.artifacts.download_artifacts(
+                    run_id=mlflow_run_id,
+                    artifact_path="outputs/brief/candidate_brief.md",
+                    dst_path=artdir,
+                )
+                brief_dest = output_dir / "brief"
+                brief_dest.mkdir()
+                shutil.copy(local_brief, brief_dest / "candidate_brief.md")
+
+            # Recruiter solution
+            with tempfile.TemporaryDirectory() as artdir:
+                local_sol = mlflow.artifacts.download_artifacts(
+                    run_id=mlflow_run_id,
+                    artifact_path="outputs/solution/recruiter_solution.md",
+                    dst_path=artdir,
+                )
+                recruiter_solution = Path(local_sol).read_text(encoding="utf-8")
+
+            scoring_md = score_submission(
+                output_dir=output_dir,
+                recruiter_solution=recruiter_solution,
+                deliverable_format=deliverable_format,
+            )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        LOGGER.error("score_run %s failed: %s", run_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Scoring failed: {exc}") from exc
+
+    if scoring_md is None:
+        raise HTTPException(status_code=422, detail="Scorer returned no result. Check server logs.")
+
+    return scoring_md
 
 
 # ── simulation endpoints ───────────────────────────────────────────

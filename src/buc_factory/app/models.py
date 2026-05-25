@@ -1,5 +1,7 @@
 """Pydantic input and output models for the BUC Factory API."""
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -100,7 +102,7 @@ class RunSummary(BaseModel):
     status: str
     mlflow_run_id: str | None = None
     parameters: RunParameters | None = None
-    scenario: dict | None = None
+    scenario: dict[str, Any] | None = None
 
 
 class RunListResponse(BaseModel):
@@ -118,7 +120,7 @@ class SearchResult(BaseModel):
     status: str
     mlflow_run_id: str | None = None
     parameters: RunParameters | None = None
-    scenario: dict | None = None
+    scenario: dict[str, Any] | None = None
 
 
 # ── simulation models ──────────────────────────────────────────────

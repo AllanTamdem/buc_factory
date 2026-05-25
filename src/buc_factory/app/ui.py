@@ -7,6 +7,7 @@ import random
 import re
 import time
 from pathlib import Path
+from typing import Any
 
 import requests
 import streamlit as st
@@ -33,7 +34,7 @@ SENIORITY_OPTS = ["Junior", "Mid-Senior", "Senior", "Staff"]
 TOOL_OPTS = ["Power BI Desktop", "Python (Notebook)"]
 FORMAT_OPTS = ["PBIP", "IPYNB"]
 
-SAMPLE_DEFAULTS: dict = {
+SAMPLE_DEFAULTS: dict[str, Any] = {
     "industry": "P&C insurance",
     "company_context": (
         "A mid-sized Paris-based property & casualty insurer serving French retail "
@@ -52,7 +53,7 @@ SAMPLE_DEFAULTS: dict = {
 }
 
 # Independent fields — randomized freely
-RANDOMIZE_POOL: dict = {
+RANDOMIZE_POOL: dict[str, Any] = {
     "role": [
         "Data Analyst",
         "Data Scientist",
@@ -67,7 +68,7 @@ RANDOMIZE_POOL: dict = {
 }
 
 # Correlated fields — always picked as a coherent unit
-_RAND_PROFILES: list[dict] = [
+_RAND_PROFILES: list[dict[str, Any]] = [
     # ── France / French ───────────────────────────────────────────────────────
     {
         "location": "Paris, France",
@@ -298,7 +299,7 @@ _DIM_BANK = json.dumps(
     ensure_ascii=False,
 )
 
-INDUSTRY_TEMPLATES: dict = {
+INDUSTRY_TEMPLATES: dict[str, Any] = {
     "P&C Insurance (France)": {
         "industry": "P&C insurance",
         "company_context": (
@@ -388,12 +389,17 @@ INDUSTRY_TEMPLATES: dict = {
 
 
 def _base() -> str:
-    return st.session_state.get(
-        "api_base", os.environ.get("API_BASE_URL", "http://localhost:8000")
+    return str(
+        st.session_state.get("api_base", os.environ.get("API_BASE_URL", "http://localhost:8000"))
     ).rstrip("/")
 
 
-def _api_get(path: str, params: dict | None = None) -> tuple:
+def _public_base() -> str:
+    """URL the *browser* uses to reach the API — may differ from _base() inside Docker."""
+    return os.environ.get("API_PUBLIC_URL", _base()).rstrip("/")
+
+
+def _api_get(path: str, params: dict[str, Any] | None = None) -> tuple[Any, str | None]:
     try:
         r = requests.get(f"{_base()}{path}", params=params, timeout=15)
         r.raise_for_status()
@@ -401,12 +407,15 @@ def _api_get(path: str, params: dict | None = None) -> tuple:
     except requests.exceptions.ConnectionError:
         return None, "Cannot connect to the API. Is the server running?"
     except requests.exceptions.HTTPError as e:
-        return None, f"HTTP {e.response.status_code}: {e.response.text}"
+        resp = e.response
+        code = resp.status_code if resp is not None else "?"
+        text = resp.text if resp is not None else ""
+        return None, f"HTTP {code}: {text}"
     except Exception as e:
         return None, str(e)
 
 
-def _api_post(path: str, payload: dict) -> tuple:
+def _api_post(path: str, payload: dict[str, Any]) -> tuple[Any, str | None]:
     try:
         r = requests.post(f"{_base()}{path}", json=payload, timeout=15)
         r.raise_for_status()
@@ -414,7 +423,10 @@ def _api_post(path: str, payload: dict) -> tuple:
     except requests.exceptions.ConnectionError:
         return None, "Cannot connect to the API. Is the server running?"
     except requests.exceptions.HTTPError as e:
-        return None, f"HTTP {e.response.status_code}: {e.response.text}"
+        resp = e.response
+        code = resp.status_code if resp is not None else "?"
+        text = resp.text if resp is not None else ""
+        return None, f"HTTP {code}: {text}"
     except Exception as e:
         return None, str(e)
 
@@ -429,7 +441,10 @@ def _fetch_text(base_url: str, path: str) -> tuple[str | None, str | None]:
     except requests.exceptions.ConnectionError:
         return None, "Cannot connect to the API."
     except requests.exceptions.HTTPError as e:
-        return None, f"HTTP {e.response.status_code}: {e.response.text}"
+        resp = e.response
+        code = resp.status_code if resp is not None else "?"
+        text = resp.text if resp is not None else ""
+        return None, f"HTTP {code}: {text}"
     except Exception as e:
         return None, str(e)
 
@@ -531,7 +546,7 @@ def _inject_css() -> None:
     )
 
 
-def _v(key: str):
+def _v(key: str) -> Any:
     return st.session_state.get(f"cr_{key}", SAMPLE_DEFAULTS.get(key, ""))
 
 
@@ -680,7 +695,7 @@ def page_create_run() -> None:
         if entities_raw.strip():
             entities = [ln.strip() for ln in entities_raw.splitlines() if ln.strip()]
 
-        payload: dict = {
+        payload: dict[str, Any] = {
             "industry": industry,
             "company_context": company_context,
             "location": location,
@@ -903,7 +918,7 @@ def page_run_detail() -> None:
             )
             st.link_button(
                 "Download recruiter.zip",
-                f"{base}/runs/{run_id}/recruiter.zip",
+                f"{_public_base()}/runs/{run_id}/recruiter.zip",
                 use_container_width=True,
                 type="primary",
             )
@@ -916,10 +931,42 @@ def page_run_detail() -> None:
             )
             st.link_button(
                 "Download candidate.zip",
-                f"{base}/runs/{run_id}/candidate.zip",
+                f"{_public_base()}/runs/{run_id}/candidate.zip",
                 use_container_width=True,
                 type="secondary",
             )
+
+        # ── Score a submission ─────────────────────────────────────────────────
+        st.divider()
+        st.markdown("**Score a submission**")
+        st.caption("Upload the completed project ZIP to score it against the recruiter answer key.")
+
+        uploaded = st.file_uploader(
+            "Solution ZIP",
+            type=["zip"],
+            key=f"score_upload_{run_id}",
+            label_visibility="collapsed",
+        )
+        if uploaded is not None and st.button("Score", key=f"score_btn_{run_id}", type="primary"):
+            with st.spinner("Scoring…"):
+                try:
+                    r = requests.post(
+                        f"{_base()}/runs/{run_id}/score",
+                        files={"solution": (uploaded.name, uploaded.getvalue(), "application/zip")},
+                        timeout=120,
+                    )
+                    if r.status_code == 200:
+                        st.session_state[f"score_result_{run_id}"] = r.text
+                    else:
+                        st.error(f"Scoring failed (HTTP {r.status_code}): {r.text}")
+                except requests.exceptions.ConnectionError:
+                    st.error("Cannot connect to the API.")
+                except Exception as e:
+                    st.error(str(e))
+
+        result_key = f"score_result_{run_id}"
+        if result_key in st.session_state:
+            st.markdown(st.session_state[result_key])
 
     elif status in ("queued", "running"):
         st.info("Run is in progress. Packages will be available once complete.")
@@ -1060,7 +1107,7 @@ def page_simulate() -> None:
         if not run_id_input.strip():
             st.error("Source run ID is required.")
         else:
-            payload: dict = {"run_id": run_id_input.strip(), "mode": mode}
+            payload: dict[str, Any] = {"run_id": run_id_input.strip(), "mode": mode}
             if is_random:
                 payload["proficiency"] = proficiency
                 if int(seed) > 0:
@@ -1137,7 +1184,7 @@ def page_simulate() -> None:
                     st.markdown("Download the completed starter project:")
                     st.link_button(
                         "Download solution.zip",
-                        f"{base}/simulations/{sid}/solution.zip",
+                        f"{_public_base()}/simulations/{sid}/solution.zip",
                         use_container_width=False,
                         type="primary",
                     )
@@ -1154,10 +1201,10 @@ def page_simulate() -> None:
 
 
 def _preprocess_readme(content: str, base_dir: Path) -> str:
-    def replace_image(m: re.Match) -> str:
+    def replace_image(m: re.Match[str]) -> str:
         alt, path = m.group(1), m.group(2)
         if path.startswith("http"):
-            return m.group(0)
+            return str(m.group(0))
         img_path = base_dir / path
         if not img_path.exists():
             return ""

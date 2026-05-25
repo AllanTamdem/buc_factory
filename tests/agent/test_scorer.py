@@ -1,11 +1,11 @@
-"""Tests for score_simulation() — verifies AnthropicLLM/OpenAILLM delegation and fallback."""
+"""Tests for score_submission() — verifies AnthropicLLM/OpenAILLM delegation and fallback."""
 
 from unittest.mock import MagicMock, patch
 
 import anthropic
 import pytest
 
-from buc_factory.agent.scorer import score_simulation
+from buc_factory.agent.scorer import score_submission
 
 
 @pytest.fixture
@@ -33,16 +33,16 @@ def _mock_llm(return_text="## Score\n| Criterion | Score |\n|---|---|\n| Analysi
 def test_score_simulation_returns_string(run_dir):
     with patch("buc_factory.agent.scorer.AnthropicLLM") as mock_cls:
         mock_cls.return_value.complete.return_value = "## Score"
-        result = score_simulation(run_dir, "solution text", "IPYNB", "normal", 0.7)
+        result = score_submission(run_dir, "solution text", "IPYNB")
     assert isinstance(result, str)
     assert "Score" in result
 
 
-def test_score_simulation_passes_system_and_user(run_dir):
+def test_score_submission_passes_system_and_user(run_dir):
     with patch("buc_factory.agent.scorer.AnthropicLLM") as mock_cls:
         instance = mock_cls.return_value
         instance.complete.return_value = "ok"
-        score_simulation(run_dir, "solution", "IPYNB", "normal", 0.8)
+        score_submission(run_dir, "solution", "IPYNB")
 
     call_kwargs = instance.complete.call_args[1]
     assert "system" in call_kwargs
@@ -54,7 +54,7 @@ def test_score_simulation_passes_system_and_user(run_dir):
 # ── fallback to OpenAI ────────────────────────────────────────────
 
 
-def test_score_simulation_falls_back_on_auth_error(run_dir):
+def test_score_submission_falls_back_on_auth_error(run_dir):
     with (
         patch("buc_factory.agent.scorer.AnthropicLLM") as mock_anthropic,
         patch("buc_factory.agent.scorer.OpenAILLM") as mock_openai,
@@ -64,13 +64,13 @@ def test_score_simulation_falls_back_on_auth_error(run_dir):
         )
         mock_openai.return_value.complete.return_value = "## OAI Score"
 
-        result = score_simulation(run_dir, "solution", "IPYNB", "normal", 0.5)
+        result = score_submission(run_dir, "solution", "IPYNB")
 
     assert result == "## OAI Score"
     mock_openai.return_value.complete.assert_called_once()
 
 
-def test_score_simulation_falls_back_on_credit_exhausted(run_dir):
+def test_score_submission_falls_back_on_credit_exhausted(run_dir):
     with (
         patch("buc_factory.agent.scorer.AnthropicLLM") as mock_anthropic,
         patch("buc_factory.agent.scorer.OpenAILLM") as mock_openai,
@@ -82,13 +82,13 @@ def test_score_simulation_falls_back_on_credit_exhausted(run_dir):
         )
         mock_openai.return_value.complete.return_value = "## OAI Score"
 
-        result = score_simulation(run_dir, "solution", "IPYNB", "normal", 0.5)
+        result = score_submission(run_dir, "solution", "IPYNB")
 
     assert result == "## OAI Score"
     mock_openai.return_value.complete.assert_called_once()
 
 
-def test_score_simulation_returns_none_on_unrelated_bad_request(run_dir):
+def test_score_submission_returns_none_on_unrelated_bad_request(run_dir):
     with (
         patch("buc_factory.agent.scorer.AnthropicLLM") as mock_anthropic,
         patch("buc_factory.agent.scorer.OpenAILLM") as mock_openai,
@@ -99,13 +99,13 @@ def test_score_simulation_returns_none_on_unrelated_bad_request(run_dir):
             body={},
         )
 
-        result = score_simulation(run_dir, "solution", "IPYNB", "normal", 0.5)
+        result = score_submission(run_dir, "solution", "IPYNB")
 
     assert result is None
     mock_openai.return_value.complete.assert_not_called()
 
 
-def test_score_simulation_returns_none_on_full_failure(run_dir):
+def test_score_submission_returns_none_on_full_failure(run_dir):
     with (
         patch("buc_factory.agent.scorer.AnthropicLLM") as mock_anthropic,
         patch("buc_factory.agent.scorer.OpenAILLM") as mock_openai,
@@ -115,7 +115,7 @@ def test_score_simulation_returns_none_on_full_failure(run_dir):
         )
         mock_openai.return_value.complete.side_effect = Exception("openai down")
 
-        result = score_simulation(run_dir, "solution", "IPYNB", "normal", 0.5)
+        result = score_submission(run_dir, "solution", "IPYNB")
 
     assert result is None
 
@@ -123,17 +123,17 @@ def test_score_simulation_returns_none_on_full_failure(run_dir):
 # ── missing inputs ────────────────────────────────────────────────
 
 
-def test_score_simulation_returns_none_when_no_brief(tmp_path):
+def test_score_submission_returns_none_when_no_brief(tmp_path):
     (tmp_path / "starter").mkdir()
-    result = score_simulation(tmp_path, "solution", "IPYNB", "normal", 0.7)
+    result = score_submission(tmp_path, "solution", "IPYNB")
     assert result is None
 
 
-def test_score_simulation_returns_none_when_no_work(tmp_path):
+def test_score_submission_returns_none_when_no_work(tmp_path):
     brief = tmp_path / "brief" / "candidate_brief.md"
     brief.parent.mkdir()
     brief.write_text("# Brief")
     (tmp_path / "starter").mkdir()
 
-    result = score_simulation(tmp_path, "solution", "IPYNB", "normal", 0.7)
+    result = score_submission(tmp_path, "solution", "IPYNB")
     assert result is None
