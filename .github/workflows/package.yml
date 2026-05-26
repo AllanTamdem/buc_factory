@@ -41,11 +41,19 @@ jobs:
     needs: ci
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # required to upload release assets
+      contents: write
+      packages: write  # required to push to ghcr.io
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up QEMU (cross-platform emulation)
         uses: docker/setup-qemu-action@v4
@@ -53,68 +61,30 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build amd64 image
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+
+      - name: Build and push multi-arch image
         uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/amd64
-          tags: buc-factory:amd64
-          load: true
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build arm64 image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/arm64
-          tags: buc-factory:arm64
-          load: true
-          cache-from: type=gha
-
-      - name: Assemble release bundles
-        run: |
-          # Shared files
-          sed '/^    build:/d' compose.yaml > compose-dist.yml
-          cp .github/.env.template .env-dist
-          cp DEPLOY.md README-dist.md
-
-          # ── macOS Apple Silicon (arm64) ────────────────────────────
-          mkdir -p _arm64
-          # Tag under the exact names compose.yml references before saving
-          docker tag buc-factory:arm64 buc-factory:latest
-          docker save buc-factory:latest -o _arm64/buc-factory-image.tar
-          cp compose-dist.yml _arm64/compose.yml
-          cp .env-dist        _arm64/.env
-          cp README-dist.md   _arm64/README.md
-          tar -czf buc-factory-stack-macos-arm64.tar.gz -C _arm64 .
-          echo "macOS arm64: $(du -sh buc-factory-stack-macos-arm64.tar.gz | cut -f1)"
-
-          # ── Windows / Linux / Intel Mac (amd64) ───────────────────
-          mkdir -p _amd64
-          docker tag buc-factory:amd64 buc-factory:latest
-          docker save buc-factory:latest -o _amd64/buc-factory-image.tar
-          cp compose-dist.yml _amd64/compose.yml
-          cp .env-dist        _amd64/.env
-          cp README-dist.md   _amd64/README.md
-          tar -czf buc-factory-stack-amd64.tar.gz -C _amd64 .
-          echo "amd64:       $(du -sh buc-factory-stack-amd64.tar.gz | cut -f1)"
-
-      - name: Upload artifacts (branch / PR builds)
-        if: github.ref_type != 'tag'
-        uses: actions/upload-artifact@v7
-        with:
-          name: buc-factory-stack
-          path: |
-            buc-factory-stack-macos-arm64.tar.gz
-            buc-factory-stack-amd64.tar.gz
-          retention-days: 7
-
-      - name: Create GitHub Release and upload bundles (tags only)
+      - name: Create GitHub Release (tags only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            buc-factory-stack-macos-arm64.tar.gz
-            buc-factory-stack-amd64.tar.gz
           generate_release_notes: true
