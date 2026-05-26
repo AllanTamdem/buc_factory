@@ -4,6 +4,7 @@ services:
   api:
     build: .
     image: buc-factory:latest
+    pull_policy: never
     container_name: buc-factory-api
     command: [".venv/bin/buc-factory-api"]
     restart: unless-stopped
@@ -22,6 +23,7 @@ services:
   # ── CLI one-shot runner (use docker compose run, not up) ────────
   buc_factory:
     image: buc-factory:latest
+    pull_policy: never
     container_name: buc-factory
     profiles: ["cli"]
     env_file: .env
@@ -40,6 +42,7 @@ services:
   # ── Streamlit UI ───────────────────────────────────────────────
   ui:
     image: buc-factory:latest
+    pull_policy: never
     container_name: buc-factory-ui
     environment:
       API_BASE_URL: "http://api:8000"
@@ -70,7 +73,6 @@ services:
       - sh
       - -c
       - >-
-        mlflow db upgrade sqlite:////mlflow/mlflow.db &&
         mlflow server --host 0.0.0.0 --port 5000
         --backend-store-uri sqlite:////mlflow/mlflow.db
         --default-artifact-root /mlflow/artifacts

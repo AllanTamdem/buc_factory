@@ -88,6 +88,7 @@ clean:
 
 clean-docker:
 	docker compose down --rmi all --volumes
+	docker system prune -f
 
 # ── Help ───────────────────────────────────────────────────────────────────────
 .PHONY: help

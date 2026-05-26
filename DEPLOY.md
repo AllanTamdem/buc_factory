@@ -2,10 +2,20 @@
 
 This archive is self-contained. It bundles the pre-built Docker image and everything you need to run the stack on any machine with Docker installed.
 
+## Packages
+
+Two archives are published — download the one matching your machine:
+
+| File | For |
+|------|-----|
+| `buc-factory-stack-macos-arm64.tar.gz` | Apple Silicon Mac (M1/M2/M3/M4) |
+| `buc-factory-stack-amd64.tar.gz` | Windows, Linux, Intel Mac |
+
 ## Contents
 
+Both archives have the same structure:
+
 ```
-buc-factory-stack.tar.gz
 ├── buc-factory-image.tar   ← pre-built application image
 ├── mlflow-image.tar        ← MLflow tracking server image
 ├── compose.yml             ← Docker Compose stack definition
@@ -13,7 +23,7 @@ buc-factory-stack.tar.gz
 └── README.md               ← this file
 ```
 
-Both images are bundled — no internet access required after extraction.
+No internet access required after extraction.
 
 ## System requirements
 

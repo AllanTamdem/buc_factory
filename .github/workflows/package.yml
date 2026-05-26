@@ -12,15 +12,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.1.0
 
       - name: Install dependencies
         run: uv sync --frozen
@@ -45,54 +45,76 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU (cross-platform emulation)
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
-      - name: Build image
-        uses: docker/build-push-action@v6
+      - name: Build amd64 image
+        uses: docker/build-push-action@v7
         with:
           context: .
-          tags: buc-factory:latest
+          platforms: linux/amd64
+          tags: buc-factory:amd64
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Pull mlflow image
-        run: docker pull ghcr.io/mlflow/mlflow:v3.12.0
+      - name: Build arm64 image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/arm64
+          tags: buc-factory:arm64
+          load: true
+          cache-from: type=gha
 
-      - name: Assemble release bundle
+      - name: Assemble release bundles
         run: |
-          mkdir -p _release
+          # Shared files
+          sed '/^    build:/d' compose.yaml > compose-dist.yml
+          cp .github/.env.template .env-dist
+          cp DEPLOY.md README-dist.md
 
-          # Save both images for fully offline / air-gapped deployment
-          docker save buc-factory:latest -o _release/buc-factory-image.tar
-          docker save ghcr.io/mlflow/mlflow:v3.12.0 -o _release/mlflow-image.tar
+          # ── macOS Apple Silicon (arm64) ────────────────────────────
+          mkdir -p _arm64
+          # Tag under the exact names compose.yml references before saving
+          docker tag buc-factory:arm64 buc-factory:latest
+          docker save buc-factory:latest -o _arm64/buc-factory-image.tar
+          cp compose-dist.yml _arm64/compose.yml
+          cp .env-dist        _arm64/.env
+          cp README-dist.md   _arm64/README.md
+          tar -czf buc-factory-stack-macos-arm64.tar.gz -C _arm64 .
+          echo "macOS arm64: $(du -sh buc-factory-stack-macos-arm64.tar.gz | cut -f1)"
 
-          # compose: strip the `build: .` line so users work from the pre-built image
-          sed '/^    build:/d' compose.yaml > _release/compose.yml
+          # ── Windows / Linux / Intel Mac (amd64) ───────────────────
+          mkdir -p _amd64
+          docker tag buc-factory:amd64 buc-factory:latest
+          docker save buc-factory:latest -o _amd64/buc-factory-image.tar
+          cp compose-dist.yml _amd64/compose.yml
+          cp .env-dist        _amd64/.env
+          cp README-dist.md   _amd64/README.md
+          tar -czf buc-factory-stack-amd64.tar.gz -C _amd64 .
+          echo "amd64:       $(du -sh buc-factory-stack-amd64.tar.gz | cut -f1)"
 
-          # .env template — no real credentials
-          cp .github/.env.template _release/.env
-
-          # Deployment guide becomes the README inside the archive
-          cp DEPLOY.md _release/README.md
-
-          tar -czf buc-factory-stack.tar.gz -C _release .
-          echo "Archive size: $(du -sh buc-factory-stack.tar.gz | cut -f1)"
-
-      - name: Upload artifact (branch / PR builds)
+      - name: Upload artifacts (branch / PR builds)
         if: github.ref_type != 'tag'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: buc-factory-stack
-          path: buc-factory-stack.tar.gz
+          path: |
+            buc-factory-stack-macos-arm64.tar.gz
+            buc-factory-stack-amd64.tar.gz
           retention-days: 7
 
-      - name: Create GitHub Release and upload bundle (tags only)
+      - name: Create GitHub Release and upload bundles (tags only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: buc-factory-stack.tar.gz
+          files: |
+            buc-factory-stack-macos-arm64.tar.gz
+            buc-factory-stack-amd64.tar.gz
           generate_release_notes: true
