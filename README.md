@@ -31,7 +31,48 @@ cp .env.example .env   # add ANTHROPIC_API_KEY and OPENAI_API_KEY
 
 ---
 
-## Usage
+## Deploy (pre-built image)
+
+No need to clone the repo. Requires Docker ≥ 24.
+
+**1. Download the stack files**
+
+```bash
+curl -LO https://raw.githubusercontent.com/AllanTamdem/buc_factory/main/compose.yaml
+curl -LO https://raw.githubusercontent.com/AllanTamdem/buc_factory/main/.env.example
+cp .env.example .env
+```
+
+**2. Set your API keys in `.env`**
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-proj-...
+```
+
+**3. Create local directories and start**
+
+```bash
+mkdir -p log data/mlflow/artifacts
+docker compose up mlflow api ui -d
+```
+
+| Service | URL |
+|---------|-----|
+| API | `http://localhost:8000/docs` |
+| Streamlit UI | `http://localhost:8501` |
+| MLflow | `http://localhost:5001` |
+
+The image is pulled automatically from `ghcr.io/allantamdem/buc_factory`.
+
+```bash
+docker compose logs -f   # follow logs
+docker compose down      # stop
+```
+
+---
+
+## Local development
 
 ### CLI
 

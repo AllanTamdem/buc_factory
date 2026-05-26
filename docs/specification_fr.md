@@ -996,12 +996,11 @@ BUC Factory peut être déployé de deux manières différentes selon le context
 - Inconvénient : le build prend 3–5 minutes à chaque déploiement, et le repo doit être accessible depuis la plateforme
 - Prérequis : accès au dépôt GitHub (public ou autorisation accordée à la plateforme)
 
-**B — Depuis l'image pré-construite par la CI/CD**
-- La CI/CD GitHub Actions construit et publie les images `amd64` et `arm64`
-- Les archives `.tar.gz` contiennent l'image Docker et les fichiers de configuration
-- Avantage : déploiement instantané, image versionnée et testée, aucun accès au code source requis
-- Inconvénient : nécessite un registry Docker ou de décompresser l'archive sur le serveur
-- Prérequis : télécharger l'archive de release GitHub (`buc-factory-stack-amd64.tar.gz` ou `buc-factory-stack-macos-arm64.tar.gz`)
+**B — Depuis l'image GHCR pré-construite**
+- GitHub Actions construit et publie des images multi-arch (`amd64` + `arm64`) dans le GitHub Container Registry à chaque push sur `main` ou tag de version
+- Image : `ghcr.io/allantamdem/buc_factory:latest` (ou un tag précis comme `ghcr.io/allantamdem/buc_factory:v1.2.3`)
+- Avantage : déploiement instantané, image versionnée et testée par la CI, aucun accès au code source requis
+- Prérequis : Docker ≥ 24, les fichiers `compose.yaml` et `.env.example` (téléchargeables sans cloner le repo)
 
 ---
 
@@ -1033,13 +1032,16 @@ make up
 | `api` | 8000 | API REST FastAPI |
 | `ui` | 8501 | Interface Streamlit |
 
-**Depuis l'image pré-construite (archive de release) :**
+**Depuis l'image GHCR (sans cloner le repo) :**
 ```bash
-tar -xzf buc-factory-stack-amd64.tar.gz
+curl -LO https://raw.githubusercontent.com/AllanTamdem/buc_factory/main/compose.yaml
+curl -LO https://raw.githubusercontent.com/AllanTamdem/buc_factory/main/.env.example
 cp .env.example .env   # renseigner les clés API
-docker load -i buc-factory-image.tar
-docker compose up
+mkdir -p log data/mlflow/artifacts
+docker compose up mlflow api ui -d
 ```
+
+L'image `ghcr.io/allantamdem/buc_factory:latest` est téléchargée automatiquement au premier démarrage.
 
 ---
 
@@ -1050,7 +1052,7 @@ Render simplifie le déploiement sans gérer de serveur. L'architecture minimale
 #### Prérequis
 - Compte Render (plan Starter à $7/mois minimum pour les disques persistants)
 - `ANTHROPIC_API_KEY` et `OPENAI_API_KEY`
-- Accès au dépôt GitHub **ou** archive d'image pré-construite
+- Accès au dépôt GitHub **ou** l'image GHCR (`ghcr.io/allantamdem/buc_factory:latest`)
 
 #### Service 1 — MLflow
 
@@ -1088,18 +1090,18 @@ Une fois déployé, noter l'URL publique du service (ex. `https://mlflow-xxxx.on
 
 4. Ajouter un **Disk** monté sur `/app/data` pour persister la base d'embeddings et les artefacts locaux
 
-**Depuis l'image pré-construite :**
+**Depuis l'image GHCR :**
 1. New → Web Service → **Deploy an existing image**
-2. Référencer l'image publiée dans un registry (GitHub Container Registry, Docker Hub)
+2. Image : `ghcr.io/allantamdem/buc_factory:latest`
 3. Configurer les mêmes variables d'environnement
 
 #### Différences clés entre les deux modes sur Render
 
-| | Depuis le repo | Depuis l'image pré-construite |
+| | Depuis le repo | Depuis l'image GHCR |
 |---|---|---|
 | Temps de déploiement | 3–5 min (build inclus) | <1 min |
 | Accès au code requis | Oui | Non |
-| Mise à jour | Automatique à chaque push | Manuelle (nouvelle image) |
+| Mise à jour | Automatique à chaque push | Manuelle (redéploiement avec nouveau tag) |
 | Contrôle de version | Branch/commit | Tag d'image |
 
 ---
@@ -1111,7 +1113,7 @@ Railway offre une expérience similaire à Render, avec une tarification à l'us
 #### Prérequis
 - Compte Railway (plan Hobby à $5/mois, inclut $5 de crédits d'usage)
 - `ANTHROPIC_API_KEY` et `OPENAI_API_KEY`
-- Accès au dépôt GitHub **ou** image Docker publiée
+- Accès au dépôt GitHub **ou** l'image GHCR (`ghcr.io/allantamdem/buc_factory:latest`)
 
 #### Service 1 — MLflow sur Railway
 
@@ -1131,9 +1133,9 @@ Railway offre une expérience similaire à Render, avec une tarification à l'us
 2. Railway détecte automatiquement le `Dockerfile`
 3. Configurer les variables d'environnement dans Settings → Variables
 
-**Depuis l'image pré-construite :**
+**Depuis l'image GHCR :**
 1. New Project → **Deploy from Docker image**
-2. Référencer l'image depuis un registry public ou privé
+2. Image : `ghcr.io/allantamdem/buc_factory:latest`
 
 #### Avantages de Railway vs Render
 
@@ -1172,33 +1174,28 @@ OVH Cloud Public est l'offre IaaS d'OVH : des instances de calcul (CPU/RAM), du 
 - Docker et Docker Compose installés sur l'instance
 - Nom de domaine (optionnel, mais recommandé pour HTTPS)
 
-#### Déploiement depuis l'image pré-construite (recommandé)
+#### Déploiement depuis l'image GHCR (recommandé)
 
-C'est la méthode la plus propre : elle n'expose pas le code source sur le serveur et déploie une version testée par la CI.
+C'est la méthode la plus propre : elle n'expose pas le code source sur le serveur et déploie une version construite et testée par la CI.
 
 ```bash
-# Sur la machine locale — télécharger l'archive de release
-wget https://github.com/<org>/buc_factory/releases/download/v1.x.x/buc-factory-stack-amd64.tar.gz
-
-# Transférer sur le serveur OVH
-scp buc-factory-stack-amd64.tar.gz ubuntu@<ip-ovh>:/opt/buc-factory/
-
 # Sur le serveur OVH
-cd /opt/buc-factory
-tar -xzf buc-factory-stack-amd64.tar.gz
+mkdir -p /opt/buc-factory && cd /opt/buc-factory
 
-# Charger l'image dans Docker
-docker load -i buc-factory-image.tar
+# Télécharger les fichiers du stack (sans cloner le repo)
+curl -LO https://raw.githubusercontent.com/AllanTamdem/buc_factory/main/compose.yaml
+curl -LO https://raw.githubusercontent.com/AllanTamdem/buc_factory/main/.env.example
 
 # Configurer les variables d'environnement
-cp .env .env.prod
-nano .env.prod   # renseigner ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.
+cp .env.example .env
+nano .env   # renseigner ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.
 
-# Démarrer
-docker compose --env-file .env.prod up -d
+# Créer les répertoires de volumes et démarrer
+mkdir -p log data/mlflow/artifacts
+docker compose up mlflow api ui -d
 ```
 
-L'archive contient déjà un `compose.yml` et un `.env` template — MLflow est téléchargé automatiquement depuis `ghcr.io` au premier `docker compose up`.
+L'image `ghcr.io/allantamdem/buc_factory:latest` est téléchargée automatiquement au premier démarrage. MLflow est tiré depuis `ghcr.io/mlflow/mlflow`.
 
 #### Déploiement depuis le repo GitHub
 
@@ -1319,8 +1316,15 @@ mlflow server \
 
 ### CI/CD
 
-Le workflow GitHub Actions `.github/workflows/package.yml` :
-1. Vérifie le code (lint, format, types, tests)
-2. Construit les images Docker pour `amd64` et `arm64`
-3. Produit des archives de déploiement autonomes (sans MLflow — téléchargé au `docker compose up`)
-4. Publie les archives en artefacts de build (branches/PR) ou en release GitHub (tags `v*`)
+Le workflow GitHub Actions `.github/workflows/package.yml` s'exécute en deux jobs séquentiels :
+
+**Job `ci`** (déclenché à chaque push et PR) :
+1. Lint et vérification de format avec `ruff`
+2. Vérification des types avec `mypy`
+3. Exécution de la suite de tests avec `pytest`
+
+**Job `package`** (déclenché après la réussite du job `ci`) :
+1. Construction d'une image Docker multi-arch (`linux/amd64` + `linux/arm64`) via QEMU + Buildx
+2. Publication dans le GitHub Container Registry (`ghcr.io/allantamdem/buc_factory`) à chaque merge sur `main` ou tag de version
+3. Tags générés : `latest` (branche main), semver (`v1.2.3`, `1.2`), et SHA court (chaque build)
+4. Création d'une release GitHub avec notes auto-générées sur les tags `v*`
