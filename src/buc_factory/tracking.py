@@ -5,6 +5,7 @@ import logging
 import os
 import threading
 from pathlib import Path
+from typing import Any, cast
 
 import mlflow
 import mlflow.genai
@@ -20,10 +21,10 @@ _EXPERIMENT = "buc-factory"
 _tls = threading.local()
 
 
-def _get_task_log() -> list[dict]:
+def _get_task_log() -> list[dict[str, Any]]:
     if not hasattr(_tls, "log"):
         _tls.log = []
-    return _tls.log
+    return cast(list[dict[str, Any]], _tls.log)
 
 
 def set_run_id(run_id: str) -> None:
@@ -67,10 +68,15 @@ def setup_mlflow(experiment_name: str = _EXPERIMENT) -> None:
     recreating if a stale path is detected. When MLFLOW_TRACKING_URI points to an
     HTTP server (e.g. Docker Compose), the server owns the artifact location and
     the local path check is skipped.
+
+    Note: if an experiment was previously created locally (with a host-path
+    artifact_location) and is now accessed via a Docker HTTP server, the artifact
+    paths in the DB must be updated manually or via the fix_mlflow_artifact_paths
+    helper below.
     """
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
     if not tracking_uri.startswith("http"):
-        artifact_root = (Path.cwd() / "mlflow_data" / "artifacts").as_uri()
+        artifact_root = (Path.cwd() / "data" / "mlflow" / "artifacts").as_uri()
         client = mlflow.MlflowClient()
 
         experiment = client.get_experiment_by_name(experiment_name)
@@ -321,6 +327,8 @@ def _register_judge_prompt() -> None:
                 model_name=_JUDGE_MODEL,
                 max_tokens=1024,
                 temperature=0.0,
+                top_p=None,
+                top_k=None,
             ),
         )
     except Exception as exc:

@@ -18,14 +18,15 @@ import json
 import logging
 import random
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 import anthropic as _anthropic
 import mlflow.langchain
 from langchain_core.messages import HumanMessage
-from langgraph.graph import END, StateGraph
+from langgraph.graph import StateGraph
 from langgraph.types import Command
 
 from ..llm.claudeai import AnthropicLLM
@@ -107,16 +108,22 @@ def _openai_fallback(task_name: str, claude_model: str) -> str:
 def _is_anthropic_unavailable_err(exc: Exception) -> bool:
     """True for any Anthropic auth / config error, even when wrapped by LangChain.
 
-    Covers three distinct failure modes:
-    - Wrong key (HTTP 401)   → anthropic.AuthenticationError
-    - Billing / perms (403)  → anthropic.PermissionDeniedError
-    - Missing / empty key    → TypeError from the SDK ("Could not resolve authentication method")
+    Covers four distinct failure modes:
+    - Wrong key (HTTP 401)        → anthropic.AuthenticationError
+    - Billing / perms (HTTP 403)  → anthropic.PermissionDeniedError
+    - Insufficient credits (400)  → anthropic.BadRequestError ("credit balance is too low")
+    - Missing / empty key         → TypeError from the SDK
+                                    ("Could not resolve authentication method")
       or pydantic.ValidationError from langchain_anthropic ("ANTHROPIC_API_KEY not set")
     """
     _AUTH_FRAGMENTS = ("authentication method", "api_key", "anthropic_api_key", "x-api-key")
     cause: Exception | None = exc
     for _ in range(5):
         if isinstance(cause, (_anthropic.AuthenticationError, _anthropic.PermissionDeniedError)):
+            return True
+        if isinstance(cause, _anthropic.BadRequestError) and (
+            "credit balance" in str(cause).lower()
+        ):
             return True
         if isinstance(cause, (TypeError, ValueError)):
             msg = str(cause).lower()
@@ -126,7 +133,7 @@ def _is_anthropic_unavailable_err(exc: Exception) -> bool:
     return False
 
 
-def _save_progress(state: BucState, new_task_index: int, extra: dict) -> None:
+def _save_progress(state: BucState, new_task_index: int, extra: dict[str, Any]) -> None:
     tasks_remaining = PLAN[new_task_index:]
     progress = {
         "task_index": new_task_index,
@@ -143,7 +150,7 @@ def _save_progress(state: BucState, new_task_index: int, extra: dict) -> None:
     Path(state["output_dir"], "state.json").write_text(json.dumps(progress, indent=2))
 
 
-def build_graph(output_dir: Path, cfg: DomainConfig):
+def build_graph(output_dir: Path, cfg: DomainConfig) -> Any:
     """
     Compile and return a LangGraph 1.x graph for the buc_factory agent.
 
@@ -160,7 +167,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
     llm_claude = AnthropicLLM()
     llm_openai = OpenAILLM()
 
-    def _active_schemas(task_name: str) -> list[dict]:
+    def _active_schemas(task_name: str) -> list[dict[str, Any]]:
         return [
             s
             for s in schemas
@@ -169,7 +176,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
             and (s["name"] != "read_file" or task_name not in _TASKS_WITHOUT_READ_FILE)
         ]
 
-    def _active_dispatch(task_name: str) -> dict:
+    def _active_dispatch(task_name: str) -> dict[str, Callable[..., Any]]:
         return {
             k: v
             for k, v in dispatch.items()
@@ -178,7 +185,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
             and (k != "read_file" or task_name not in _TASKS_WITHOUT_READ_FILE)
         }
 
-    def _invoke(task_name: str, messages: list) -> tuple[list, int, int, str]:
+    def _invoke(task_name: str, messages: list[Any]) -> tuple[list[Any], int, int, str]:
         """Invoke the LLM for a task. Returns (messages, in_tok, out_tok, actual_model).
 
         If Anthropic is already known to be unavailable, reroutes to OpenAI immediately.
@@ -247,7 +254,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
         attempt = f"{state['retry_count'] + 1}/{MAX_RETRIES_PER_TASK}"
         LOGGER.info(f"\n━━━ [{task_name}] attempt {attempt} ━━━")
 
-        update: dict = {"validation_error": None, "current_task": task_name}
+        update: dict[str, Any] = {"validation_error": None, "current_task": task_name}
 
         # Fully-specified bootstrap: write bootstrap.json directly and skip the LLM.
         # Calling the model just to echo back config values is wasteful.
@@ -266,7 +273,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
 
         # Pre-roll scenario values in Python so randomness is independent of model
         # temperature. Only roll on the first attempt so retries use the same values.
-        rolled: dict | None = None
+        rolled: dict[str, Any] | None = None
         if task_name == "roll_scenario":
             if state["retry_count"] == 0:
                 dims = state.get("bootstrapped_dimensions") or cfg.dimensions or {}
@@ -314,7 +321,9 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
         state: BucState,
     ) -> Command[Literal["prepare_task", "run_parallel_group", "fail_task", "__end__"]]:
         task_name = PLAN[state["task_index"]]
-        ok, msg, extracted = validate_and_extract(task_name, cfg, output_dir, state)
+        ok, msg, extracted = validate_and_extract(
+            task_name, cfg, output_dir, cast(dict[str, Any], state)
+        )
         elapsed_s = time.perf_counter() - _task_start[0]
         LOGGER.info(f"  validation: {'✓' if ok else '✗'} {msg} ({_fmt(elapsed_s)})")
 
@@ -332,28 +341,24 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
                 output_tokens=tok[1],
                 model=_task_actual_models.get(task_name, task_model),
             )
-            update = {
+            update: dict[str, Any] = {
                 "validation_error": None,
                 "task_index": new_index,
                 "tasks_remaining": PLAN[new_index:],
                 "retry_count": 0,
                 **extracted,
             }
-            next_node = (
-                END
-                if new_index >= len(PLAN)
-                else "run_parallel_group"
-                if new_index in _PARALLEL_GROUPS
-                else "prepare_task"
-            )
-            return Command(goto=next_node, update=update)
+            if new_index >= len(PLAN):
+                return Command(goto="__end__", update=update)
+            if new_index in _PARALLEL_GROUPS:
+                return Command(goto="run_parallel_group", update=update)
+            return Command(goto="prepare_task", update=update)
 
         new_retry = state["retry_count"] + 1
         attempt = f"{state['retry_count'] + 1}/{MAX_RETRIES_PER_TASK}"
         LOGGER.warning(f"  validation failed (attempt {attempt}): {msg} ({_fmt(elapsed_s)})")
-        update = {"validation_error": msg, "retry_count": new_retry}
-        goto = "fail_task" if new_retry >= MAX_RETRIES_PER_TASK else "prepare_task"
-        if goto == "fail_task":
+        retry_update: dict[str, Any] = {"validation_error": msg, "retry_count": new_retry}
+        if new_retry >= MAX_RETRIES_PER_TASK:
             tok = _task_tokens.get(task_name, [0, 0])
             _, task_model, _ = _task_config(task_name)
             log_task_result(
@@ -365,7 +370,8 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
                 output_tokens=tok[1],
                 model=_task_actual_models.get(task_name, task_model),
             )
-        return Command(goto=goto, update=update)
+            return Command(goto="fail_task", update=retry_update)
+        return Command(goto="prepare_task", update=retry_update)
 
     def fail_task(state: BucState) -> Command[Literal["__end__"]]:
         task_name = PLAN[min(state["task_index"], len(PLAN) - 1)]
@@ -374,11 +380,13 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
             f"\n✗ [{task_name}] failed after {MAX_RETRIES_PER_TASK} attempts"
             f": {state.get('validation_error')} ({elapsed})"
         )
-        return Command(goto=END, update={"failed": True})
+        return Command(goto="__end__", update={"failed": True})
 
     # ── parallel helpers ───────────────────────────────────────────
 
-    def _run_one_task_full(task_name: str, state: BucState) -> tuple[bool, str, dict, dict]:
+    def _run_one_task_full(
+        task_name: str, state: BucState
+    ) -> tuple[bool, str, dict[str, Any], dict[str, Any]]:
         """Run one task with retries in a thread. Returns (ok, msg, extracted, tok_info)."""
         retry_feedback: str | None = None
         in_total = out_total = 0
@@ -430,7 +438,9 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
             _, in_tok, out_tok, last_model = _invoke(task_name, [HumanMessage(content=prompt)])
             in_total += in_tok
             out_total += out_tok
-            ok, msg, extracted = validate_and_extract(task_name, cfg, output_dir, state)
+            ok, msg, extracted = validate_and_extract(
+                task_name, cfg, output_dir, cast(dict[str, Any], state)
+            )
             elapsed = time.perf_counter() - t0
             status = "✓" if ok else "✗"
             LOGGER.info(f"  [{task_name}] attempt {attempt + 1}: {status} {msg} ({_fmt(elapsed)})")
@@ -464,7 +474,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
 
         parent_run_id = get_run_id()
 
-        def _worker(name: str) -> tuple:
+        def _worker(name: str) -> tuple[bool, str, dict[str, Any], dict[str, Any]]:
             set_run_id(parent_run_id)
             return _run_one_task_full(name, state)
 
@@ -484,7 +494,7 @@ def build_graph(output_dir: Path, cfg: DomainConfig):
             if tok.get("prompt"):
                 log_prompt(tok["prompt"], f"prompts/{task_name}.md")
 
-        merged_extracted: dict = {}
+        merged_extracted: dict[str, Any] = {}
         for task_name in task_names:
             ok, _, extracted, tok = results[task_name]
             _, default_model, _ = _task_config(task_name)

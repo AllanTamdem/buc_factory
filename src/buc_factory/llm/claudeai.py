@@ -1,5 +1,7 @@
 """LangChain-backed Anthropic LLM for the buc_factory agent."""
 
+from typing import Any, cast
+
 import anthropic
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import BaseMessage, SystemMessage
@@ -27,13 +29,13 @@ class AnthropicLLM(BaseLLM):
     def _get_client(self, model: str, max_tokens: int) -> ChatAnthropic:
         key = (model, max_tokens)
         if key not in self._client_cache:
-            kwargs: dict = {"model": model, "max_tokens": max_tokens}
+            kwargs: dict[str, Any] = {"model": model, "max_tokens": max_tokens}
             if self._api_key:
                 kwargs["api_key"] = self._api_key
             self._client_cache[key] = ChatAnthropic(**kwargs)
-        return self._client_cache[key]
+        return cast(ChatAnthropic, self._client_cache[key])
 
-    def _prepare_tools(self, tools: list[dict]) -> list[dict]:
+    def _prepare_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return tools
 
     def _make_system_message(self, system: str) -> BaseMessage:
@@ -45,14 +47,18 @@ class AnthropicLLM(BaseLLM):
         self,
         prompt: str,
         *,
+        system: str | None = None,
         model: str | None = None,
         max_tokens: int = 512,
     ) -> str:
         """Single-turn completion via the raw Anthropic SDK (no autolog side-effects)."""
         client = anthropic.Anthropic(api_key=self._api_key or None)
-        response = client.messages.create(
-            model=model or self._model,
-            max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return response.content[0].text
+        kwargs: dict[str, Any] = {
+            "model": model or self._model,
+            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if system:
+            kwargs["system"] = system
+        response = client.messages.create(**kwargs)
+        return str(response.content[0].text)

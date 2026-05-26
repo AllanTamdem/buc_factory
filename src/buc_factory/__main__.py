@@ -19,6 +19,7 @@ import tempfile
 import time
 from contextlib import ExitStack
 from pathlib import Path
+from typing import Any
 
 import mlflow
 from dotenv import load_dotenv
@@ -60,7 +61,7 @@ LOGGER = logging.getLogger(__name__)
 def _load_initial_state(output_dir: Path) -> BucState:
     """Return a fresh or resumed BucState from the output directory."""
     state_file = output_dir / "state.json"
-    saved: dict = {}
+    saved: dict[str, Any] = {}
     if state_file.exists():
         saved = json.loads(state_file.read_text())
         task_index = saved.get("task_index", 0)
@@ -140,9 +141,9 @@ def main() -> None:
                 LOGGER.info(f"\n✓ all sub-tasks complete — total {fmt_total}")
             else:
                 mlflow.set_tag("failure_task", final_state.get("current_task", "unknown"))
-                mlflow.MlflowClient().set_terminated(
-                    mlflow.active_run().info.run_id, status="FAILED"
-                )
+                active = mlflow.active_run()
+                if active is not None:
+                    mlflow.MlflowClient().set_terminated(active.info.run_id, status="FAILED")
                 LOGGER.error(f"\n✗ agent failed after {fmt_total}")
                 sys.exit(1)
 

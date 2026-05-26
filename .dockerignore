@@ -1,12 +1,13 @@
 .git
 __pycache__
 .pytest_cache
+.venv/
 tests/
 dist
 build
 .env
 data/
-mlflow_data/
+data/mlflow/
 log/
 notebook/
 .vscode/

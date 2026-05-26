@@ -1,6 +1,8 @@
 """Pydantic input and output models for the BUC Factory API."""
 
-from pydantic import BaseModel, ConfigDict
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Dimensions(BaseModel):
@@ -100,7 +102,7 @@ class RunSummary(BaseModel):
     status: str
     mlflow_run_id: str | None = None
     parameters: RunParameters | None = None
-    scenario: dict | None = None
+    scenario: dict[str, Any] | None = None
 
 
 class RunListResponse(BaseModel):
@@ -118,4 +120,54 @@ class SearchResult(BaseModel):
     status: str
     mlflow_run_id: str | None = None
     parameters: RunParameters | None = None
-    scenario: dict | None = None
+    scenario: dict[str, Any] | None = None
+
+
+# ── simulation models ──────────────────────────────────────────────
+
+
+class SimulationRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "run_id": "run_001",
+                "mode": "random",
+                "proficiency": 0.65,
+                "seed": 42,
+            }
+        }
+    )
+
+    run_id: str = Field(description="Source assessment run to simulate against")
+    mode: str = Field(
+        default="perfect",
+        description="'perfect' for a flawless submission; 'random' to simulate varying proficiency",
+    )
+    proficiency: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Candidate proficiency 0.0–1.0 (only for mode='random'). "
+            "Sampled uniformly at random when omitted."
+        ),
+    )
+    seed: int | None = Field(
+        default=None,
+        description="RNG seed for reproducible random-mode proficiency sampling",
+    )
+
+
+class SimulationResponse(BaseModel):
+    simulation_id: str
+    status: str
+
+
+class SimulationDetails(BaseModel):
+    simulation_id: str
+    source_run_id: str
+    status: str
+    mode: str
+    proficiency: float | None
+    seed: int | None
+    mlflow_run_id: str | None = None

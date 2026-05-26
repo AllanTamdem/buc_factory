@@ -5,6 +5,7 @@ import logging
 import os
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from openai import OpenAI
@@ -14,7 +15,7 @@ from buc_factory.llm.gptai import OpenAILLM
 LOGGER = logging.getLogger(__name__)
 
 _EMBED_MODEL = "text-embedding-3-small"
-_DB_PATH = Path(os.environ.get("EMBEDDINGS_DB_PATH", "mlflow_data/embeddings.db"))
+_DB_PATH = Path(os.environ.get("EMBEDDINGS_DB_PATH", "data/embeddings.db"))
 
 _embed_client: OpenAI | None = None
 _llm: OpenAILLM | None = None
@@ -49,7 +50,7 @@ def _get_conn() -> sqlite3.Connection:
     return conn
 
 
-def build_index_text(params: dict, scenario: dict | None) -> str:
+def build_index_text(params: dict[str, Any], scenario: dict[str, Any] | None) -> str:
     """Build the text to embed for a run, shared by live indexing and backfill."""
     g = params.get
     title = " ".join(p for p in [g("seniority", ""), g("role", "")] if p)
@@ -71,7 +72,7 @@ def build_index_text(params: dict, scenario: dict | None) -> str:
     if not scenario:
         return header
 
-    scenario_parts = []
+    scenario_parts: list[str] = []
     for k, v in scenario.items():
         if isinstance(v, list):
             scenario_parts.extend(f"{k}: {i}" for i in v if str(i))
@@ -103,7 +104,8 @@ def _batch_cosine(query_vec: list[float], matrix: np.ndarray) -> np.ndarray:
     q = q / q_norm
     row_norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     normed = np.divide(matrix, row_norms, where=row_norms > 0)
-    return normed @ q
+    result: np.ndarray[Any, np.dtype[Any]] = normed @ q
+    return result
 
 
 def store_embedding(api_run_id: str, mlflow_run_id: str, text: str) -> None:

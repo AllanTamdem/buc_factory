@@ -15,6 +15,8 @@ lives here and is shared across providers.
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
@@ -50,16 +52,16 @@ class BaseLLM(ABC):
         self._model = model
         self._default_max_tokens = max_tokens
         self._api_key = api_key
-        self._client_cache: dict = {}
+        self._client_cache: dict[tuple[str, int], Any] = {}
 
     # ── provider hooks ─────────────────────────────────────────────
 
     @abstractmethod
-    def _get_client(self, model: str, max_tokens: int):
+    def _get_client(self, model: str, max_tokens: int) -> Any:
         """Return a bound LangChain chat client for the given model / token cap."""
 
     @abstractmethod
-    def _prepare_tools(self, tools: list[dict]) -> list[dict]:
+    def _prepare_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Convert Anthropic-format tool schemas to the provider's expected format."""
 
     @abstractmethod
@@ -71,6 +73,7 @@ class BaseLLM(ABC):
         self,
         prompt: str,
         *,
+        system: str | None = None,
         model: str | None = None,
         max_tokens: int = 512,
     ) -> str:
@@ -78,7 +81,9 @@ class BaseLLM(ABC):
 
     # ── shared infrastructure ──────────────────────────────────────
 
-    def _llm_with_tools(self, max_tokens: int, tools: list[dict], model: str | None = None):
+    def _llm_with_tools(
+        self, max_tokens: int, tools: list[dict[str, Any]], model: str | None = None
+    ) -> Any:
         return self._get_client(model or self._model, max_tokens).bind_tools(
             self._prepare_tools(tools)
         )
@@ -87,8 +92,8 @@ class BaseLLM(ABC):
         self,
         messages: list[BaseMessage],
         system: str,
-        tools: list[dict],
-        dispatch: dict[str, Callable],
+        tools: list[dict[str, Any]],
+        dispatch: dict[str, Callable[..., Any]],
         max_tokens: int | None = None,
         max_steps: int = 40,
         done_tool: str = "mark_subtask_complete",
@@ -130,20 +135,23 @@ class BaseLLM(ABC):
             if not response.tool_calls:
                 break
 
-            tool_messages: list[BaseMessage] = []
-            done_signal = False
-            for tc in response.tool_calls:
+            def _call_tool(tc: Any) -> ToolMessage:
                 fn = dispatch.get(tc["name"])
                 try:
                     result = fn(**tc["args"]) if fn else f"ERROR: unknown tool {tc['name']}"
                 except Exception as e:
                     result = f"ERROR: {type(e).__name__}: {e}"
                 LOGGER.info(f"  → {tc['name']} → {str(result)[:120]}")
-                tool_messages.append(
-                    ToolMessage(content=str(result), tool_call_id=tc["id"], name=tc["name"])
-                )
-                if tc["name"] == done_tool:
-                    done_signal = True
+                return ToolMessage(content=str(result), tool_call_id=tc["id"], name=tc["name"])
+
+            n = len(response.tool_calls)
+            if n > 1:
+                with ThreadPoolExecutor(max_workers=n) as executor:
+                    tool_messages = list(executor.map(_call_tool, response.tool_calls))
+            else:
+                tool_messages = [_call_tool(tc) for tc in response.tool_calls]
+
+            done_signal = any(tc["name"] == done_tool for tc in response.tool_calls)
 
             msgs.extend(tool_messages)
             if done_signal:

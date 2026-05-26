@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Any
 
 from .entity import DomainConfig
 from .prompting import _is_python, calc_language
@@ -13,8 +14,8 @@ TASKS_WITH_RUN_PYTHON = {"generate_data_script"}
 
 
 def validate_and_extract(
-    name: str, cfg: DomainConfig, output_dir: Path, state: dict
-) -> tuple[bool, str, dict]:
+    name: str, cfg: DomainConfig, output_dir: Path, state: dict[str, Any]
+) -> tuple[bool, str, dict[str, Any]]:
     """Validate a completed subtask; return (ok, message, state_updates)."""
     try:
         if name == "bootstrap_domain":
@@ -34,9 +35,9 @@ def validate_and_extract(
         if name == "roll_scenario":
             data = json.loads((output_dir / "scenario.json").read_text())
             expected = set((state.get("bootstrapped_dimensions") or cfg.dimensions or {}).keys())
-            missing = expected - data.keys()
-            if missing:
-                return False, f"scenario.json missing dimensions: {missing}", {}
+            missing_dims = expected - data.keys()
+            if missing_dims:
+                return False, f"scenario.json missing dimensions: {missing_dims}", {}
             return True, "scenario rolled", {"scenario": data}
 
         if name == "write_brief":
@@ -51,27 +52,28 @@ def validate_and_extract(
         if name == "design_data_schema":
             schema = json.loads((output_dir / "brief/data_schema.json").read_text())
             files_in_schema = {f["filename"].replace(".csv", "") for f in schema.get("files", [])}
-            entities = set(state.get("bootstrapped_entities") or cfg.entities or [])
-            overlap = len(files_in_schema & entities)
-            if overlap < max(3, int(0.8 * len(entities))):
-                return False, f"schema covers only {overlap}/{len(entities)} entities", {}
+            schema_entities = set(state.get("bootstrapped_entities") or cfg.entities or [])
+            overlap = len(files_in_schema & schema_entities)
+            if overlap < max(3, int(0.8 * len(schema_entities))):
+                return False, f"schema covers only {overlap}/{len(schema_entities)} entities", {}
             if not schema.get("traps"):
                 return False, "schema must declare at least one trap", {}
             return True, f"{overlap} entities, {len(schema['traps'])} traps", {}
 
         if name == "generate_data_script":
             csv_dir = output_dir / "starter/data"
-            entities = state.get("bootstrapped_entities") or cfg.entities or []
-            for entity in entities:
+            csv_entities: list[str] = list(state.get("bootstrapped_entities") or cfg.entities or [])
+            for entity in csv_entities:
                 if not (csv_dir / f"{entity}.csv").exists():
                     return False, f"{entity}.csv not generated", {}
-            if len(entities) >= 2:
+            if len(csv_entities) >= 2:
                 import pandas as pd
 
-                fact = pd.read_csv(csv_dir / f"{entities[0]}.csv", sep=None, engine="python")
-                dim = pd.read_csv(csv_dir / f"{entities[1]}.csv", sep=None, engine="python")
+                fact = pd.read_csv(str(csv_dir / f"{csv_entities[0]}.csv"))
+                dim = pd.read_csv(str(csv_dir / f"{csv_entities[1]}.csv"))
                 fk = next(
-                    (c for c in fact.columns if entities[1].rstrip("s").lower() in c.lower()), None
+                    (c for c in fact.columns if csv_entities[1].rstrip("s").lower() in c.lower()),
+                    None,
                 )
                 pk = next((c for c in dim.columns if "id" in c.lower()), None)
                 if fk and pk:
@@ -80,7 +82,7 @@ def validate_and_extract(
                         return (
                             False,
                             f"FK violated: {len(orphans)} orphans "
-                            f"{entities[0]}.{fk}→{entities[1]}.{pk}",
+                            f"{csv_entities[0]}.{fk}→{csv_entities[1]}.{pk}",
                             {},
                         )
             return True, "CSVs generated, FK heuristic passes", {}
@@ -90,14 +92,13 @@ def validate_and_extract(
             deliverable_fmt = cfg.deliverable_format.upper()
 
             if deliverable_fmt == "PBIP":
-                required = [
+                required_json = [
                     "Assessment.pbip",
                     "Assessment.SemanticModel/definition.pbism",
                     "Assessment.SemanticModel/definition/model.tmdl",
                     "Assessment.Report/definition.pbir",
-                    "Assessment.Report/report.json",
                 ]
-                for r in required:
+                for r in required_json:
                     if not (starter / r).exists():
                         return False, f"missing {r}", {}
                     if r.endswith((".json", ".pbir", ".pbip", ".pbism")):
@@ -105,6 +106,7 @@ def validate_and_extract(
                             json.loads((starter / r).read_text())
                         except json.JSONDecodeError as e:
                             return False, f"{r} invalid JSON: {e}", {}
+
                 pbism_path = starter / "Assessment.SemanticModel/definition.pbism"
                 if pbism_path.exists():
                     pbism = json.loads(pbism_path.read_text())
@@ -114,7 +116,30 @@ def validate_and_extract(
                             f"definition.pbism version must be '4.0', got '{pbism.get('version')}'",
                             {},
                         )
-                return True, "PBIP starter OK", {}
+
+                # Accept both PBIR (pages/) and PBIR-Legacy (report.json)
+                has_pages = (starter / "Assessment.Report/pages/pages.json").exists()
+                has_legacy = (starter / "Assessment.Report/report.json").exists()
+                if not has_pages and not has_legacy:
+                    return (
+                        False,
+                        "missing report structure: need pages/pages.json (PBIR)"
+                        " or report.json (PBIR-Legacy)",
+                        {},
+                    )
+                if has_pages:
+                    try:
+                        json.loads((starter / "Assessment.Report/pages/pages.json").read_text())
+                    except json.JSONDecodeError as e:
+                        return False, f"pages/pages.json invalid JSON: {e}", {}
+                if has_legacy:
+                    try:
+                        json.loads((starter / "Assessment.Report/report.json").read_text())
+                    except json.JSONDecodeError as e:
+                        return False, f"report.json invalid JSON: {e}", {}
+
+                fmt_label = "PBIR" if has_pages else "PBIR-Legacy"
+                return True, f"PBIP starter OK ({fmt_label})", {}
 
             if _is_python(cfg.tool) or deliverable_fmt == "IPYNB":
                 nb_path = starter / "notebook.ipynb"
@@ -152,7 +177,7 @@ def validate_and_extract(
             return True, "solution OK", {}
 
         if name == "final_assembly":
-            expected = [
+            required_files = [
                 "scenario.json",
                 "bootstrap.json",
                 "brief/candidate_brief.md",
@@ -160,9 +185,9 @@ def validate_and_extract(
                 "solution/recruiter_solution.md",
                 "starter/generate_data.py",
             ]
-            missing = [p for p in expected if not (output_dir / p).exists()]
-            if missing:
-                return False, f"missing: {missing}", {}
+            absent_files = [p for p in required_files if not (output_dir / p).exists()]
+            if absent_files:
+                return False, f"missing: {absent_files}", {}
             return True, "all artifacts present", {}
 
         return False, f"unknown task {name}", {}

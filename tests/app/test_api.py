@@ -51,6 +51,7 @@ def client():
     with (
         patch("buc_factory.app.api.setup_mlflow"),
         patch("buc_factory.app.api._init_run_counter"),
+        patch("buc_factory.app.api._init_sim_counter"),
         TestClient(app) as c,
     ):
         yield c
@@ -183,6 +184,7 @@ def test_failed_run_status_survives_restart(monkeypatch):
         patch("buc_factory.app.api._fetch_scenario", return_value=None),
         patch("buc_factory.app.api.setup_mlflow"),
         patch("buc_factory.app.api._init_run_counter"),
+        patch("buc_factory.app.api._init_sim_counter"),
         TestClient(app) as c,
     ):
         resp = c.get("/runs/run_001")

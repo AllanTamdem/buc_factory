@@ -4,8 +4,9 @@ services:
   api:
     build: .
     image: buc-factory:latest
+    pull_policy: never
     container_name: buc-factory-api
-    command: buc-factory-api
+    command: [".venv/bin/buc-factory-api"]
     restart: unless-stopped
     env_file: .env
     environment:
@@ -13,17 +14,16 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./conf:/app/conf
       - ./log:/app/log
-      - ./mlflow_data:/app/mlflow_data
+      - ./data:/app/data
     depends_on:
       mlflow:
         condition: service_healthy
 
   # ── CLI one-shot runner (use docker compose run, not up) ────────
   buc_factory:
-    build: .
     image: buc-factory:latest
+    pull_policy: never
     container_name: buc-factory
     profiles: ["cli"]
     env_file: .env
@@ -39,33 +39,53 @@ services:
     # Run a specific assessment:
     #   docker compose run --rm buc_factory --config conf/industry_spec/p&c_insurance_france.yml --output-dir data/run_001
 
+  # ── Streamlit UI ───────────────────────────────────────────────
+  ui:
+    image: buc-factory:latest
+    pull_policy: never
+    container_name: buc-factory-ui
+    environment:
+      API_BASE_URL: "http://api:8000"
+      API_PUBLIC_URL: "http://localhost:8000"
+    command:
+      - .venv/bin/buc-factory-ui
+      - --server.headless=true
+      - --server.address=0.0.0.0
+      - --server.port=8501
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+
   # ── MLflow tracking server ──────────────────────────────────────
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v3.11.1
+    image: ghcr.io/mlflow/mlflow:v3.12.0
     container_name: mlflow
     restart: unless-stopped
+    environment:
+      MLFLOW_SERVER_ALLOWED_HOSTS: "mlflow:5000,localhost:5001,127.0.0.1:5001"
     ports:
       - "5001:5000"
     volumes:
-      - mlflow_data:/mlflow
-    command: >
-      mlflow server
-        --host 0.0.0.0
-        --port 5000
+      - ./data/mlflow:/mlflow
+    command:
+      - sh
+      - -c
+      - >-
+        mlflow server --host 0.0.0.0 --port 5000
         --backend-store-uri sqlite:////mlflow/mlflow.db
         --default-artifact-root /mlflow/artifacts
-        --allowed-hosts "mlflow:5000,127.0.0.1:5001,localhost:5001"
+        --serve-artifacts
+        --artifacts-destination /mlflow/artifacts
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000').read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health').read()"]
       interval: 5s
       timeout: 3s
       retries: 10
 
-volumes:
-  mlflow_data:
-
 # Useful commands:
-#   docker compose up mlflow api -d      # start MLflow + API server
+#   docker compose up mlflow api ui -d   # start MLflow + API + UI
 #   docker compose up mlflow -d          # start MLflow server only
 #   docker compose --profile cli run --rm buc_factory --config conf/... --output-dir data/run_001
 #   docker compose down --rmi all        # tear down everything

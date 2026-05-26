@@ -10,6 +10,7 @@ import logging
 import sqlite3
 import tempfile
 from pathlib import Path
+from typing import Any, cast
 
 import mlflow
 from dotenv import load_dotenv
@@ -32,7 +33,7 @@ def _already_indexed() -> set[str]:
     return {r[0] for r in rows}
 
 
-def _fetch_scenario(run: mlflow.entities.Run) -> dict | None:
+def _fetch_scenario(run: mlflow.entities.Run) -> dict[str, Any] | None:
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             local = mlflow.artifacts.download_artifacts(
@@ -40,7 +41,7 @@ def _fetch_scenario(run: mlflow.entities.Run) -> dict | None:
                 artifact_path="outputs/scenario.json",
                 dst_path=tmpdir,
             )
-            return json.loads(Path(local).read_text())
+            return cast(dict[str, Any], json.loads(Path(local).read_text()))
     except Exception:
         return None
 
