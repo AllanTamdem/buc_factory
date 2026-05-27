@@ -12,6 +12,8 @@ FROM python:3.12-slim
 WORKDIR /app
 # Copy the fully-built venv (deps + wheel-installed package, no source tree)
 COPY --from=builder /app/.venv /app/.venv
+COPY README.md .
+COPY docs/ docs/
 RUN mkdir -p log data/mlflow/artifacts
 EXPOSE 8000
 CMD [".venv/bin/buc-factory-api"]

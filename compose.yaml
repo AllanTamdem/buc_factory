@@ -12,7 +12,7 @@ services:
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
     ports:
-      - "8000:8000"
+      - "8010:8000"
     volumes:
       - ./log:/app/log
       - ./data:/app/data
@@ -46,7 +46,7 @@ services:
     container_name: buc-factory-ui
     environment:
       API_BASE_URL: "http://api:8000"
-      API_PUBLIC_URL: "http://localhost:8000"
+      API_PUBLIC_URL: "${API_PUBLIC_URL:-http://localhost:8010}"
     command:
       - .venv/bin/buc-factory-ui
       - --server.headless=true
@@ -54,7 +54,7 @@ services:
       - --server.port=8501
     restart: unless-stopped
     ports:
-      - "8501:8501"
+      - "8511:8501"
     depends_on:
       - api
 
@@ -64,9 +64,9 @@ services:
     container_name: mlflow
     restart: unless-stopped
     environment:
-      MLFLOW_SERVER_ALLOWED_HOSTS: "mlflow:5000,localhost:5001,127.0.0.1:5001"
+      MLFLOW_SERVER_ALLOWED_HOSTS: "mlflow:5000,localhost:5011,127.0.0.1:5011"
     ports:
-      - "5001:5000"
+      - "5011:5000"
     volumes:
       - ./data/mlflow:/mlflow
     command:

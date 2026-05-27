@@ -15,9 +15,13 @@ import streamlit as st
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 _HERE = Path(__file__).parent
-_LOGO_LOCKUP = _HERE.parent.parent.parent / "docs" / "logo_lockup.svg"
+_APP_ROOT = next(
+    (p for p in [Path("/app"), _HERE.parent.parent.parent] if (p / "README.md").exists()),
+    _HERE.parent.parent.parent,
+)
+_LOGO_LOCKUP = _APP_ROOT / "docs" / "logo_lockup.svg"
 _LOGO_MARK = _HERE.parent / "static" / "logo_mark.svg"
-_README = _HERE.parent.parent.parent / "README.md"
+_README = _APP_ROOT / "README.md"
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -389,9 +393,12 @@ INDUSTRY_TEMPLATES: dict[str, Any] = {
 
 
 def _base() -> str:
-    return str(
-        st.session_state.get("api_base", os.environ.get("API_BASE_URL", "http://localhost:8000"))
-    ).rstrip("/")
+    # Prefer the internal env URL (set in Docker for container-to-container calls).
+    # Fall back to the sidebar override for local dev where API_BASE_URL is not set.
+    env_url = os.environ.get("API_BASE_URL", "").strip()
+    if env_url:
+        return env_url.rstrip("/")
+    return str(st.session_state.get("api_base", "http://localhost:8010")).rstrip("/")
 
 
 def _public_base() -> str:
@@ -1213,7 +1220,14 @@ def _preprocess_readme(content: str, base_dir: Path) -> str:
         style = "max-width:100%;height:auto"
         return f'<img src="data:{mime};base64,{b64}" alt="{alt}" style="{style}"/>'
 
-    return re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", replace_image, content)
+    def neutralize_local_md_link(m: re.Match[str]) -> str:
+        text, path = m.group(1), m.group(2)
+        if path.startswith("http") or not path.endswith(".md"):
+            return str(m.group(0))
+        return text  # drop unservable local link, keep display text
+
+    content = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", replace_image, content)
+    return re.sub(r"(?<!!)\[([^\]]*)\]\(([^)]+)\)", neutralize_local_md_link, content)
 
 
 def page_docs() -> None:
@@ -1223,6 +1237,22 @@ def page_docs() -> None:
         return
     content = _README.read_text(encoding="utf-8")
     st.markdown(_preprocess_readme(content, _README.parent), unsafe_allow_html=True)
+
+    spec_files = [
+        ("🇺🇸 English", _APP_ROOT / "docs" / "specification_en.md"),
+        ("🇫🇷 Français", _APP_ROOT / "docs" / "specification_fr.md"),
+    ]
+    available = [(label, path) for label, path in spec_files if path.exists()]
+    if available:
+        st.divider()
+        _section("Specifications")
+        tabs = st.tabs([label for label, _ in available])
+        for tab, (_, path) in zip(tabs, available, strict=True):
+            with tab:
+                st.markdown(
+                    _preprocess_readme(path.read_text(encoding="utf-8"), path.parent),
+                    unsafe_allow_html=True,
+                )
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -1268,15 +1298,19 @@ def main() -> None:
         api_base = st.text_input(
             "Server URL",
             value=st.session_state.get(
-                "api_base", os.environ.get("API_BASE_URL", "http://localhost:8000")
+                "api_base",
+                os.environ.get(
+                    "API_PUBLIC_URL", os.environ.get("API_BASE_URL", "http://localhost:8010")
+                ),
             ),
             label_visibility="collapsed",
             key="api_base_input",
         )
         st.session_state["api_base"] = api_base
 
+        _health_url = os.environ.get("API_BASE_URL", api_base).strip().rstrip("/")
         try:
-            r = requests.get(f"{api_base}/docs", timeout=2)
+            r = requests.get(f"{_health_url}/docs", timeout=2)
             if r.status_code < 400:
                 st.markdown(
                     '<span style="color:#1D9E75;font-size:13px">● API online</span>',
