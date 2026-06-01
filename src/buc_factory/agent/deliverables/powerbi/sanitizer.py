@@ -458,7 +458,7 @@ def sanitize_pbip_starter(starter: Path) -> list[str]:
     0b  Fix definition.pbism (version 4.2, $schema)
     0c  Fix Assessment.pbip ($schema, enableAutoRecovery)
     0d  Fix definition.pbir ($schema, remove byConnection: null)
-    1   Fix TMDL files (remove createOrReplace, fix path separators)
+    1   Fix TMDL files (remove createOrReplace, fix path separators, convert -- to ///)
     2   Fix database.tmdl / model.tmdl content confusion
     3   Fix definition.pbir version (must be "4.0")
     4   Convert hardcoded File.Contents paths → DataPath parameter
@@ -557,6 +557,14 @@ def sanitize_pbip_starter(starter: Path) -> list[str]:
         patched = re.sub(r'File\.Contents\("([^"]+)"\)', _fix_path, text)
         if patched != text:
             fixes.append(f"fixed path separators in {tmdl_file.name}")
+            text = patched
+
+        # DAX `--` comments are only valid inside expressions (deeper indentation).
+        # At the table/model object body level (one tab), only `///` is accepted by
+        # the TMDL parser. Convert `\t-- …` lines to `\t/// …`.
+        patched = re.sub(r"^(\t)--", r"\1///", text, flags=re.MULTILINE)
+        if patched != text:
+            fixes.append(f"converted table-level '--' comments to '///' in {tmdl_file.name}")
             text = patched
 
         if text != original:

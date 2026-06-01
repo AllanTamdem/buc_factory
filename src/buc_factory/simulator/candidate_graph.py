@@ -122,19 +122,23 @@ def _alea_guidance(alea: float) -> str:
     if alea >= 0.75:
         return (
             "TODAY'S SHAPE — High energy: you are focused and motivated today. "
-            "You go the extra mile: cover every bonus requirement, add depth to your analysis, "
-            "and write a thorough, multi-paragraph answer to the brief's open question."
+            "Push the upper end of your proficiency tier: cover every bonus requirement, "
+            "and invest extra effort in reasoning narration — add richer justifications "
+            "for your design choices, deeper analytical commentary, and a thorough "
+            "multi-paragraph answer to the brief's open question. "
+            "Reviewers should clearly see the thinking behind every major decision."
         )
     if alea >= 0.45:
         return (
             "TODAY'S SHAPE — Normal energy: you work at your usual pace. "
-            "Cover the required items as your proficiency tier dictates; "
-            "give a solid but concise answer to the brief's open question."
+            "Cover the required items and reasoning narration as your proficiency tier "
+            "dictates; give a solid but concise answer to the brief's open question."
         )
     return (
         "TODAY'S SHAPE — Low energy: you are a bit distracted today. "
-        "Within your proficiency tier, skip optional items and advanced requirements first. "
-        "Give only a brief, surface-level answer to the brief's open question."
+        "Within your proficiency tier, cut reasoning narration and analytical commentary "
+        "first — implement the code but skip the explanatory comments and design "
+        "justifications. Give only a brief, surface-level answer to the open question."
     )
 
 

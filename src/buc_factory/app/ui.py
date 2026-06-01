@@ -975,7 +975,12 @@ def page_run_detail() -> None:
 
         result_key = f"score_result_{run_id}"
         if result_key in st.session_state:
-            st.markdown(st.session_state[result_key])
+            try:
+                st.markdown(
+                    ScoringResult.model_validate_json(st.session_state[result_key]).to_markdown()
+                )
+            except Exception as _exc:
+                st.warning(f"Could not render scoring result: {_exc}")
 
     elif status in ("queued", "running"):
         st.info("Run is in progress. Packages will be available once complete.")

@@ -9,13 +9,30 @@ from pydantic import BaseModel
 ScoringCategory = Literal["methodology", "technical", "delivery"]
 ToolType = Literal["powerbi", "python_da", "python_ds"]
 
+# Category label translations per language
+_CAT_LABELS: dict[str, dict[str, str]] = {
+    "fr": {"methodology": "Méthodologie", "technical": "Technique", "delivery": "Livraison"},
+    "de": {"methodology": "Methodik", "technical": "Technisch", "delivery": "Lieferung"},
+    "nl": {"methodology": "Methodologie", "technical": "Technisch", "delivery": "Levering"},
+    "es": {"methodology": "Metodología", "technical": "Técnico", "delivery": "Entrega"},
+    "en": {"methodology": "Methodology", "technical": "Technical", "delivery": "Delivery"},
+}
+
+# Reverse map: translated category label → canonical English key
+_CAT_REVERSE: dict[str, ScoringCategory] = {
+    label.lower(): key  # type: ignore[misc]
+    for lang_map in _CAT_LABELS.values()
+    for key, label in lang_map.items()
+}
+
 
 class ScoredDimension(BaseModel):
     name: str
+    display_name: str | None = None  # localized display name in the brief's language
     category: ScoringCategory
     score: int  # 0 to max_score (integer — LLMs are far more reliable with integers)
     max_score: int
-    comment: str  # one sentence in the brief's language; evidence-based, not value-based
+    comment: str  # one or two sentences in the brief's language; evidence-based, not value-based
 
 
 class ScoringResult(BaseModel):
@@ -23,11 +40,11 @@ class ScoringResult(BaseModel):
     total_score: int
     max_total_score: int
     dimensions: list[ScoredDimension]
-    overall_verdict: str  # one sentence: proficiency band + key strength + main gap
+    overall_verdict: str  # proficiency level + use-case strength + gap + recommendation
     language: str  # ISO 639-1 code detected from the brief
 
     def to_markdown(self) -> str:
-        """Render as a plain markdown table (no embedded JSON)."""
+        """Render as a language-aware markdown table followed by a verdict section."""
         lang = self.language.lower()
         if lang == "fr":
             h_dim, h_cat, h_score, h_comment = "Dimension", "Catégorie", "Score", "Commentaire"
@@ -45,21 +62,19 @@ class ScoringResult(BaseModel):
             h_dim, h_cat, h_score, h_comment = "Dimension", "Category", "Score", "Comment"
             h_total, h_verdict = "**Total**", "**Verdict**"
 
+        cat_labels = _CAT_LABELS.get(lang, _CAT_LABELS["en"])
+
         rows = [
             f"| {h_dim} | {h_cat} | {h_score} | {h_comment} |",
             "|---|---|---|---|",
         ]
         for d in self.dimensions:
-            rows.append(
-                f"| {d.name.replace('_', ' ').title()} "
-                f"| {d.category} "
-                f"| {d.score}/{d.max_score} "
-                f"| {d.comment} |"
-            )
-        rows.append(
-            f"| {h_total} | | **{self.total_score}/{self.max_total_score}** | "
-            f"{h_verdict}: {self.overall_verdict} |"
-        )
+            display = d.display_name or d.name.replace("_", " ").title()
+            cat_label = cat_labels.get(d.category, d.category)
+            rows.append(f"| {display} | {cat_label} | {d.score}/{d.max_score} | {d.comment} |")
+        rows.append(f"| {h_total} | | **{self.total_score}/{self.max_total_score}** | |")
+        rows.append("")
+        rows.append(f"{h_verdict}: {self.overall_verdict}")
         return "\n".join(rows)
 
     @classmethod
@@ -112,23 +127,28 @@ class ScoringResult(BaseModel):
                 m = re.search(r"\*\*(\d+)/(\d+)\*\*", score_raw)
                 if m:
                     total_score, max_total_score = int(m.group(1)), int(m.group(2))
+                # Legacy format: verdict was in comment cell of total row
                 v = re.search(rf"\*\*{verdict_key}\*\*\s*:\s*(.+)", comment_raw)
-                overall_verdict = v.group(1).strip() if v else comment_raw.strip("* ")
+                overall_verdict = v.group(1).strip() if v else ""
                 continue
             m = re.search(r"(\d+)/(\d+)", score_raw)
             score, max_score = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
-            cat = cat_raw.strip()
-            if cat not in ("methodology", "technical", "delivery"):
-                cat = "methodology"
+            cat = _CAT_REVERSE.get(cat_raw.strip().lower(), "methodology")
             dimensions.append(
                 ScoredDimension(
                     name=name_raw.strip("* "),
-                    category=cat,  # type: ignore[arg-type]
+                    category=cat,
                     score=score,
                     max_score=max_score,
                     comment=comment_raw.strip("* "),
                 )
             )
+
+        # New format: verdict appears as a line after the table
+        if not overall_verdict:
+            v = re.search(rf"\*\*{verdict_key}\*\*\s*:\s*(.+)", text)
+            if v:
+                overall_verdict = v.group(1).strip()
 
         return cls(
             tool_type=tool_type,

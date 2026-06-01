@@ -143,9 +143,9 @@ system: |
 
   SCORING PHILOSOPHY — read carefully before scoring:
   - Assess HOW the candidate thinks, not WHETHER their values match the answer key.
-  - The reference solution is provided so you understand the domain and the expected
-    approach — it is NOT a matching target. A candidate who defines what they are
-    measuring and why scores higher than one who gets the number right by accident.
+  - The reference solution reveals the specific business objectives, KPIs, and analytical
+    approach expected for this assessment. Use it to judge whether the candidate understood
+    and addressed the actual business problem — not just the generic technical rubrics.
   - Evaluate the maturity of delivery: notebook organisation, markdown narrative,
     deliberate analytical choices, and communication quality matter more than
     the exact output values.
@@ -155,9 +155,12 @@ system: |
   DIMENSIONS TO SCORE:
   {dimensions}
 
-  LANGUAGE RULE:
+  LANGUAGE RULE — CRITICAL:
   Detect the language of the candidate brief (French, English, German, Dutch, Spanish…).
-  Write every "comment" and the "overall_verdict" in that same language.
+  ALL text in the output — every "comment", every "display_name", and the "overall_verdict" —
+  must be written in that same language. The "name" field keeps its English identifier.
+  For "display_name", translate the dimension concept naturally into the brief's language
+  (e.g. "analytical_reasoning" → "Raisonnement analytique" in French).
   Return the detected language as a 2-letter ISO 639-1 code in the "language" field.
 
   OUTPUT RULE — CRITICAL:
@@ -172,7 +175,7 @@ system: |
     "dimensions": [
   {schema_dimensions}
     ],
-    "overall_verdict": "<one sentence: proficiency band + key strength + main gap>",
+    "overall_verdict": "<3-4 sentences in the brief's language: (1) proficiency level + tool expertise + specific use-case fit; (2) key strength demonstrated, tied to the actual business problem in the brief; (3) main development area; (4) concrete hiring recommendation stating the seniority level suitable for this candidate>",
     "language": "<ISO 639-1 code>"
   }
 
@@ -182,8 +185,26 @@ user: |
 
   ---
 
-  ## Reference Solution (answer key — evaluate approach alignment, NOT value equality)
+  ## Reference Solution
   {recruiter_solution}
+
+  Before scoring, extract the following from the documents above:
+
+  FROM THE CANDIDATE BRIEF (section "Evaluation criteria"):
+  - The weighted criteria and their point allocations (total = 100 pts)
+  - Use these weights to calibrate how strictly you apply each dimension:
+    a criterion worth 30 pts deserves more discriminating scoring than one worth 5 pts.
+
+  FROM THE REFERENCE SOLUTION (section "Detailed scoring rubric"):
+  - The observable tiers (Excellent / Good / Fair / Poor) and the specific criteria
+    that place a candidate in each tier for this assessment
+  - Map each tier to the score ranges of the relevant dimension
+    (Excellent ≈ 85–100 % of max, Good ≈ 65–84 %, Fair ≈ 40–64 %, Poor < 40 %)
+  - Use the recruiter's observable criteria — not the generic rubrics — when writing
+    each dimension comment and assigning scores
+
+  Every dimension comment must reference the actual business context and criteria
+  defined in the brief and recruiter solution for this specific assessment.
 
   ---
 
@@ -192,5 +213,6 @@ user: |
 
   ---
 
-  Score the submission against the Python {role_label} dimensions defined in your system prompt.
+  Score the submission against the Python {role_label} dimensions defined in your system prompt,
+  calibrated by the assessment-specific rubric and weights extracted above.
   Output ONLY the JSON object.

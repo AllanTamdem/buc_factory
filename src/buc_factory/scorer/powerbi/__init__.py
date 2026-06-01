@@ -42,9 +42,10 @@ def load_prompt() -> tuple[str, str]:
         for i, d in enumerate(tmpl["dimensions"])
     )
     schema_dims = "\n".join(
-        f'      {{"name": "{d["name"]}", "category": "{d["category"]}", '
+        f'      {{"name": "{d["name"]}", "display_name": "<localized name in brief language>", '
+        f'"category": "{d["category"]}", '
         f'"score": <0–{d["max_score"]}>, "max_score": {d["max_score"]}, '
-        f'"comment": "<one sentence>"}}'
+        f'"comment": "<1-2 sentences in brief language>"}}'
         for d in tmpl["dimensions"]
     )
     max_total = sum(d["max_score"] for d in tmpl["dimensions"])
