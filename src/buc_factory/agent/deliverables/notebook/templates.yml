@@ -10,7 +10,7 @@ python_da: |
   Write under "starter/":
 
   requirements.txt — one package per line, no version pins:
-    pandas, numpy, matplotlib, seaborn, jupyter
+    pandas, numpy, matplotlib, seaborn, jupyter, notebook
 
   notebook.ipynb — valid Jupyter 4 notebook (nbformat=4, nbformat_minor=5).
   Cell format: code cells → cell_type "code", execution_count null, metadata {{}},
@@ -36,8 +36,14 @@ python_da: |
    13. [md]   "## 5. Open Question"
    14. [md]   "## 6. Conclusion"
 
-  README.md — install (pip install -r requirements.txt) and launch
-  (cd starter && jupyter notebook notebook.ipynb) instructions.
+  README.md — cross-platform setup and launch instructions covering:
+    • Linux / macOS: python -m venv .venv && source .venv/bin/activate &&
+      pip install -r requirements.txt && python -m notebook notebook.ipynb
+    • Windows (cmd): python -m venv .venv && .venv\Scripts\activate &&
+      pip install -r requirements.txt && python -m notebook notebook.ipynb
+    • Windows (PowerShell): python -m venv .venv && .venv\Scripts\Activate.ps1 &&
+      pip install -r requirements.txt && python -m notebook notebook.ipynb
+  Note: "python -m notebook" works even if jupyter is not on PATH.
 
   Validate notebook.ipynb with validate_json. Then call mark_subtask_complete.
 
@@ -50,7 +56,7 @@ python_ds: |
   Write under "starter/":
 
   requirements.txt — one package per line, no version pins:
-    pandas, numpy, matplotlib, seaborn, scikit-learn, xgboost, tensorflow, jupyter
+    pandas, numpy, matplotlib, seaborn, scikit-learn, xgboost, tensorflow, jupyter, notebook
 
   notebook.ipynb — valid Jupyter 4 notebook. Same cell format rules as above.
 
@@ -80,7 +86,14 @@ python_ds: |
    15. [md]   "## 6. Open Question"
    16. [md]   "## 7. Conclusion"
 
-  README.md — install and launch instructions.
+  README.md — cross-platform setup and launch instructions covering:
+    • Linux / macOS: python -m venv .venv && source .venv/bin/activate &&
+      pip install -r requirements.txt && python -m notebook notebook.ipynb
+    • Windows (cmd): python -m venv .venv && .venv\Scripts\activate &&
+      pip install -r requirements.txt && python -m notebook notebook.ipynb
+    • Windows (PowerShell): python -m venv .venv && .venv\Scripts\Activate.ps1 &&
+      pip install -r requirements.txt && python -m notebook notebook.ipynb
+  Note: "python -m notebook" works even if jupyter is not on PATH.
 
   Validate notebook.ipynb with validate_json. Then call mark_subtask_complete.
 
