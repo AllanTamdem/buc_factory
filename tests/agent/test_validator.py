@@ -224,10 +224,13 @@ def test_generate_starter_pbip_valid(tmp_path, cfg):
     starter = tmp_path / "starter"
     for path, content in [
         ("Assessment.pbip", "{}"),
-        ("Assessment.SemanticModel/definition.pbism", '{"version": "4.0", "settings": {}}'),
+        ("Assessment.SemanticModel/definition.pbism", '{"version": "4.2", "settings": {}}'),
         ("Assessment.SemanticModel/definition/model.tmdl", "content"),
-        ("Assessment.Report/definition.pbir", "{}"),
-        ("Assessment.Report/report.json", "{}"),
+        ("Assessment.SemanticModel/definition/expressions/DataPath.tmdl", "content"),
+        ("Assessment.Report/definition.pbir", '{"version": "4.0"}'),
+        ("Assessment.Report/definition/version.json", '{"version": "2.0.0"}'),
+        ("Assessment.Report/definition/report.json", "{}"),
+        ("Assessment.Report/definition/pages/pages.json", "{}"),
     ]:
         p = starter / path
         p.parent.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,122 @@
+# OpenAI provider override for the Power BI generate_starter prompt.
+# Deep-merged on top of templates.yml when provider != "claude".
+
+power_bi: |
+  Sub-task 6/8: Generate the Power BI starter (PBIP).
+
+  The data schema is pre-loaded below — do NOT call read_file for data_schema.json.
+
+  ## DATA SCHEMA
+  {data_schema_json}
+
+  Build under "starter/" using PBIR format (Power BI Desktop 2.154 / May 2026).
+
+  CRITICAL: report.json and pages/ are now inside Assessment.Report/definition/ —
+  NOT at the report root. This changed in Power BI Desktop 2.154.
+
+  Write these files:
+    - Assessment.pbip
+    - Assessment.SemanticModel/.platform
+    - Assessment.SemanticModel/definition.pbism
+    - Assessment.SemanticModel/definition/model.tmdl
+    - Assessment.SemanticModel/definition/database.tmdl
+    - Assessment.SemanticModel/definition/expressions/DataPath.tmdl
+    - Assessment.SemanticModel/definition/tables/<Entity>.tmdl  (one per entity)
+    - Assessment.Report/.platform
+    - Assessment.Report/definition.pbir
+    - Assessment.Report/definition/version.json           ← NEW
+    - Assessment.Report/definition/report.json            ← now inside definition/
+    - Assessment.Report/definition/pages/pages.json       ← now inside definition/
+    - Assessment.Report/definition/pages/<PageHexId>/page.json
+    - Assessment.Report/definition/pages/<PageHexId>/visuals/starter_placeholder/visual.json
+    - Assessment.Report/StaticResources/SharedResources/BaseThemes/CY26SU05.json
+
+  ## TMDL FORMAT — READ CAREFULLY
+
+  TMDL is tab-indented declarative text. It is NOT JSON and NOT TMSL.
+  Do NOT write "createOrReplace" anywhere — that is TMSL, not TMDL.
+
+  database.tmdl — write EXACTLY this (two lines only, tab-indented):
+    database Database
+    	compatibilityLevel: 1601
+
+  model.tmdl — culture settings and relationships ONLY. Do NOT write any
+  "ref table" or "ref expression" lines — tables and expressions are auto-discovered
+  from their subdirectories in TMDL v4 and "ref" lines cause a parse error:
+    model Model
+    	culture: <BCP-47 tag matching the run language/location, e.g. fr-FR, nl-NL, en-GB>
+    	defaultPowerBIDataSourceVersion: powerBI_V3
+    	discourageImplicitMeasures
+
+    	annotation PBI_QueryOrder = ["Entity1", "Entity2", ...]
+
+  expressions/DataPath.tmdl — parameter candidates update to load their data:
+    expression DataPath = "C:\data" meta [IsParameterQuery = true, Type = "Text", IsParameterQueryRequired = true]
+    	lineageTag: <any-uuid>
+
+  tables/<Entity>.tmdl — use DataPath parameter (NEVER a hardcoded path):
+    table Entity
+    	column col_name
+    		dataType: string
+    		summarizeBy: none
+    		sourceColumn: col_name
+
+    	partition Entity = m
+    		mode: import
+    		source =
+    			let
+    				Source = Csv.Document(File.Contents(DataPath & "\Entity.csv"),
+    					[Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
+    				Promoted = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+    				Typed = Table.TransformColumnTypes(Promoted,
+    					{{"col_name", type text}}, "en-US")
+    			in
+    				Typed
+
+    	annotation PBI_ResultType = Table
+
+  Column names: declare ONLY columns present in DATA SCHEMA. Never add computed
+  date-hierarchy columns (Month, Mois, Quarter, Trimestre, Year, Année, Semaine)
+  as sourceColumn — they don't exist in the CSV. Date granularity is computed in DAX.
+
+  ## JSON FILE CONTENTS
+
+  Assessment.pbip:
+    {{"version": "1.0", "artifacts": [{{"report": {{"path": "Assessment.Report"}}}}], "settings": {{}}}}
+
+  definition.pbism:
+    {{"version": "4.0", "settings": {{}}}}
+
+  definition.pbir — version MUST be "4.0":
+    {{"version": "4.0", "datasetReference": {{"byPath": {{"path": "../Assessment.SemanticModel"}}, "byConnection": null}}}}
+
+  definition/version.json:
+    {{"version":"1.0"}}
+
+  definition/report.json — global config, NO "sections" key:
+    {{"config": "{{\"version\":\"5.43\",\"themeCollection\":{{\"baseTheme\":{{\"name\":\"CY26SU05\"}}}}}}", "layoutOptimization": 0, "resourcePackages": [{{"resourcePackage": {{"disabled": false, "items": [{{"name": "theme", "path": "StaticResources/SharedResources/BaseThemes/CY26SU05.json", "type": 202}}], "name": "SharedResources", "type": 2}}}}], "settings": {{"useStylableVisualContainerHeader": true}}}}
+
+  definition/pages/pages.json:
+    {{"pages": [{{"name": "<PageHexId>", "displayName": "Page 1", "ordinal": 0}}]}}
+
+  definition/pages/<PageHexId>/page.json — use 20-char hex string for page name:
+    {{"name": "<PageHexId>", "displayName": "Page 1", "config": "{{\"version\":\"5.43\",\"themeCollection\":{{\"baseTheme\":{{\"name\":\"CY26SU05\"}}}},\"objects\":{{}}}}", "displayOption": 1, "height": 720, "width": 1280, "filters": "[]"}}
+
+  definition/pages/<PageHexId>/visuals/starter_placeholder/visual.json — REQUIRED:
+    {{"name": "starter_placeholder", "position": {{"x": 490, "y": 330, "z": 1000, "width": 300, "height": 60}}, "config": "{{\"name\":\"starter_placeholder\",\"layouts\":[{{\"id\":0,\"position\":{{\"x\":490,\"y\":330,\"z\":1000,\"width\":300,\"height\":60}},\"displayState\":{{\"mode\":0}}}}],\"singleVisual\":{{\"visualType\":\"textbox\",\"drillFilterOtherVisuals\":true,\"objects\":{{}}}}}}", "filters": "[]", "tabOrder": 0}}
+
+  .platform files — use EXACTLY this $schema (copy verbatim):
+    "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json"
+  Required fields: metadata.type, metadata.displayName, config.version ("2.0"), config.logicalId (any UUID).
+
+  ## DECIMAL SEPARATOR
+
+  CSVs always use ISO dates and "." decimal regardless of model culture.
+  Pass "en-US" as third argument to Table.TransformColumnTypes:
+    Typed = Table.TransformColumnTypes(Promoted, {{"col", type number}}, "en-US")
+
+  ## EXECUTION ORDER
+
+  1. Write ALL files (write_file calls)
+  2. Validate all JSON files (one validate_json call per JSON file)
+  3. Call mark_subtask_complete

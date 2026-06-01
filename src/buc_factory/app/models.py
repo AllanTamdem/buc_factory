@@ -131,30 +131,27 @@ class SimulationRequest(BaseModel):
         json_schema_extra={
             "example": {
                 "run_id": "run_001",
-                "mode": "random",
                 "proficiency": 0.65,
-                "seed": 42,
             }
         }
     )
 
     run_id: str = Field(description="Source assessment run to simulate against")
-    mode: str = Field(
-        default="perfect",
-        description="'perfect' for a flawless submission; 'random' to simulate varying proficiency",
-    )
     proficiency: float | None = Field(
         default=None,
         ge=0.0,
         le=1.0,
         description=(
-            "Candidate proficiency 0.0–1.0 (only for mode='random'). "
-            "Sampled uniformly at random when omitted."
+            "Candidate proficiency 0.0–1.0. "
+            "1.0 = perfect expert submission. "
+            "Sampled uniformly in [0.3, 0.95] when omitted."
         ),
     )
-    seed: int | None = Field(
+    alea: float | None = Field(
         default=None,
-        description="RNG seed for reproducible random-mode proficiency sampling",
+        ge=0.0,
+        le=1.0,
+        description="Daily energy 0.0–1.0. Drawn randomly when omitted.",
     )
 
 
@@ -167,7 +164,6 @@ class SimulationDetails(BaseModel):
     simulation_id: str
     source_run_id: str
     status: str
-    mode: str
     proficiency: float | None
-    seed: int | None
+    alea: float | None = None
     mlflow_run_id: str | None = None

@@ -1,16 +1,35 @@
+"""Per-task output validation dispatcher.
+
+Generic task validators live here (bootstrap, roll_scenario, write_brief, …).
+Tool-specific generate_starter validation is delegated to the appropriate
+deliverable sub-package under agent/deliverables/.
+"""
+
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
+from .deliverables import get_deliverable
+from .deliverables.notebook import (
+    validate_generate_starter as _validate_notebook_starter,
+)
+from .deliverables.notebook import (
+    validate_generate_starter_generic,
+)
+from .deliverables.powerbi import (
+    check_relationship_coherence,
+)
+from .deliverables.powerbi import (
+    validate_generate_starter as _validate_pbip_starter,
+)
 from .entity import DomainConfig
 from .prompting import _is_python, calc_language
 
+LOGGER = logging.getLogger(__name__)
+
 MAX_RETRIES_PER_TASK = 3
 TASKS_WITH_RUN_PYTHON = {"generate_data_script"}
-
-# ──────────────────────────────────────────────────────────────────
-# Validators
-# ──────────────────────────────────────────────────────────────────
 
 
 def validate_and_extract(
@@ -21,8 +40,11 @@ def validate_and_extract(
         if name == "bootstrap_domain":
             data = json.loads((output_dir / "bootstrap.json").read_text())
             if not data.get("dimensions") or not data.get("entities"):
-                msg = "bootstrap.json must contain non-empty 'dimensions' and 'entities'"
-                return False, msg, {}
+                return (
+                    False,
+                    "bootstrap.json must contain non-empty 'dimensions' and 'entities'",
+                    {},
+                )
             if len(data["entities"]) < 3:
                 return False, f"need at least 3 entities, got {len(data['entities'])}", {}
             updates = {
@@ -58,6 +80,9 @@ def validate_and_extract(
                 return False, f"schema covers only {overlap}/{len(schema_entities)} entities", {}
             if not schema.get("traps"):
                 return False, "schema must declare at least one trap", {}
+            ok, rel_err = check_relationship_coherence(schema)
+            if not ok:
+                return False, rel_err, {}
             return True, f"{overlap} entities, {len(schema['traps'])} traps", {}
 
         if name == "generate_data_script":
@@ -89,80 +114,14 @@ def validate_and_extract(
 
         if name == "generate_starter":
             starter = output_dir / "starter"
-            deliverable_fmt = cfg.deliverable_format.upper()
-
-            if deliverable_fmt == "PBIP":
-                required_json = [
-                    "Assessment.pbip",
-                    "Assessment.SemanticModel/definition.pbism",
-                    "Assessment.SemanticModel/definition/model.tmdl",
-                    "Assessment.Report/definition.pbir",
-                ]
-                for r in required_json:
-                    if not (starter / r).exists():
-                        return False, f"missing {r}", {}
-                    if r.endswith((".json", ".pbir", ".pbip", ".pbism")):
-                        try:
-                            json.loads((starter / r).read_text())
-                        except json.JSONDecodeError as e:
-                            return False, f"{r} invalid JSON: {e}", {}
-
-                pbism_path = starter / "Assessment.SemanticModel/definition.pbism"
-                if pbism_path.exists():
-                    pbism = json.loads(pbism_path.read_text())
-                    if pbism.get("version") != "4.0":
-                        return (
-                            False,
-                            f"definition.pbism version must be '4.0', got '{pbism.get('version')}'",
-                            {},
-                        )
-
-                # Accept both PBIR (pages/) and PBIR-Legacy (report.json)
-                has_pages = (starter / "Assessment.Report/pages/pages.json").exists()
-                has_legacy = (starter / "Assessment.Report/report.json").exists()
-                if not has_pages and not has_legacy:
-                    return (
-                        False,
-                        "missing report structure: need pages/pages.json (PBIR)"
-                        " or report.json (PBIR-Legacy)",
-                        {},
-                    )
-                if has_pages:
-                    try:
-                        json.loads((starter / "Assessment.Report/pages/pages.json").read_text())
-                    except json.JSONDecodeError as e:
-                        return False, f"pages/pages.json invalid JSON: {e}", {}
-                if has_legacy:
-                    try:
-                        json.loads((starter / "Assessment.Report/report.json").read_text())
-                    except json.JSONDecodeError as e:
-                        return False, f"report.json invalid JSON: {e}", {}
-
-                fmt_label = "PBIR" if has_pages else "PBIR-Legacy"
-                return True, f"PBIP starter OK ({fmt_label})", {}
-
-            if _is_python(cfg.tool) or deliverable_fmt == "IPYNB":
-                nb_path = starter / "notebook.ipynb"
-                req_path = starter / "requirements.txt"
-                if not nb_path.exists():
-                    return False, "missing starter/notebook.ipynb", {}
-                if not req_path.exists():
-                    return False, "missing starter/requirements.txt", {}
-                try:
-                    nb = json.loads(nb_path.read_text())
-                except json.JSONDecodeError as e:
-                    return False, f"notebook.ipynb invalid JSON: {e}", {}
-                if nb.get("nbformat") != 4:
-                    return False, "notebook.ipynb must be nbformat 4", {}
-                cells = nb.get("cells", [])
-                if len(cells) < 5:
-                    return False, f"notebook too sparse ({len(cells)} cells)", {}
-                return True, f"Python IPYNB starter OK ({len(cells)} cells)", {}
-
-            files = list(starter.rglob("*")) if starter.exists() else []
-            if len(files) < 2:
-                return False, "starter looks empty", {}
-            return True, f"{len(files)} files (generic check)", {}
+            deliverable = get_deliverable(cfg)
+            if deliverable == "powerbi":
+                ok, msg = _validate_pbip_starter(starter, cfg)
+            elif deliverable == "notebook" or _is_python(cfg.tool):
+                ok, msg = _validate_notebook_starter(starter, cfg)
+            else:
+                ok, msg = validate_generate_starter_generic(starter, cfg)
+            return ok, msg, {}
 
         if name == "write_recruiter_solution":
             f = output_dir / "solution/recruiter_solution.md"

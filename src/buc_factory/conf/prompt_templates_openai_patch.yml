@@ -56,6 +56,14 @@ tasks:
 
     The write_file content must be valid JSON only — no prose, no markdown fences.
 
+    FK GRAPH RULE — no alternative paths: only the main fact table holds FK links to
+    dimensions. If A→B and B→C already exist, do NOT also add A→C — that creates two
+    paths from A to C and Power BI rejects ambiguous relationships.
+
+    DATE COLUMN RULE — raw dates only: never add Month, Mois, Trimestre, Quarter,
+    Year, Année, Semaine, or any date-derived column. Store raw date/datetime values;
+    time granularity is computed in DAX, not stored in the CSV.
+
     Then call mark_subtask_complete.
 
   generate_data_script: |
@@ -92,3 +100,5 @@ tasks:
       If it fails, fix the script and repeat from Step 2.
 
     Step 4 — Call mark_subtask_complete only after Steps 1-3 all succeed.
+
+  # generate_starter override lives in agent/deliverables/powerbi/templates_openai_patch.yml

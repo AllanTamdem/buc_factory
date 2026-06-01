@@ -52,6 +52,13 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "buc_factory" = ["conf/*.yml", "static/*.svg"]
+"buc_factory.agent.deliverables.powerbi" = ["*.yml"]
+"buc_factory.agent.deliverables.notebook" = ["*.yml"]
+"buc_factory.simulator" = ["*.yml"]
+"buc_factory.simulator.powerbi" = ["*.yml"]
+"buc_factory.simulator.notebook" = ["*.yml"]
+"buc_factory.scorer.powerbi" = ["*.yml"]
+"buc_factory.scorer.notebook" = ["*.yml"]
 
 [dependency-groups]
 dev = [

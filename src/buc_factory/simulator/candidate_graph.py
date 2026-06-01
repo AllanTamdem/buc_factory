@@ -21,10 +21,10 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph import StateGraph
 from langgraph.types import Command
 
+from ..agent.tool import make_tools
 from ..llm.claudeai import AnthropicLLM
 from ..llm.gptai import OpenAILLM
 from ..utils import fmt
-from .tool import make_tools
 
 LOGGER = logging.getLogger(__name__)
 
@@ -46,17 +46,18 @@ _TIER_JUNIOR_MID = 0.35
 class CandidateState(TypedDict):
     messages: list[BaseMessage]
     output_dir: str
-    mode: str  # "perfect" | "random"
-    proficiency: float  # 0.0–1.0
+    proficiency: float  # 0.0–1.0 (1.0 = perfect expert)
+    alea: float  # 0.0–1.0 — daily random variation ("shape of the day")
     deliverable_format: str  # "PBIP" | "IPYNB"
     retry_count: int
     validation_error: str | None
     failed: bool
 
 
-# ── prompting ──────────────────────────────────────────────────────
+# ── prompt loading ─────────────────────────────────────────────────
 
 _SIM_PROMPTS: dict[str, Any] | None = None
+_SIM_DELIVERABLE_CACHE: dict[str, dict[str, Any]] = {}
 
 
 def _sim_prompts() -> dict[str, Any]:
@@ -65,18 +66,32 @@ def _sim_prompts() -> dict[str, Any]:
         _SIM_PROMPTS = cast(
             dict[str, Any],
             yaml.safe_load(
-                importlib.resources.files("buc_factory")
-                .joinpath("conf/sim_prompt_templates.yml")
+                importlib.resources.files("buc_factory.simulator")
+                .joinpath("prompt_templates.yml")
                 .read_text(encoding="utf-8")
             ),
         )
     return _SIM_PROMPTS
 
 
-def _persona_and_instructions(mode: str, proficiency: float) -> tuple[str, str]:
+def _sim_deliverable_templates(deliverable: str) -> dict[str, Any]:
+    """Load and cache the format_guidance template for a simulator subpackage."""
+    if deliverable not in _SIM_DELIVERABLE_CACHE:
+        pkg = f"buc_factory.simulator.{deliverable}"
+        content = (
+            importlib.resources.files(pkg).joinpath("templates.yml").read_text(encoding="utf-8")
+        )
+        _SIM_DELIVERABLE_CACHE[deliverable] = cast(dict[str, Any], yaml.safe_load(content))
+    return _SIM_DELIVERABLE_CACHE[deliverable]
+
+
+# ── prompting ──────────────────────────────────────────────────────
+
+
+def _persona_and_instructions(proficiency: float) -> tuple[str, str]:
     tiers = _sim_prompts()["tiers"]
     pct = int(proficiency * 100)
-    if mode == "perfect" or proficiency >= _TIER_EXPERT:
+    if proficiency >= _TIER_EXPERT:
         t = tiers["expert"]
         return t["persona"], t["instructions"].rstrip()
     if proficiency >= _TIER_SENIOR:
@@ -102,22 +117,43 @@ def _persona_and_instructions(mode: str, proficiency: float) -> tuple[str, str]:
     return t["persona"], fmt(t["instructions"], proficiency_pct=pct).rstrip()
 
 
-def _build_system_prompt(mode: str, proficiency: float, deliverable_format: str) -> str:
+def _alea_guidance(alea: float) -> str:
+    """Return a one-paragraph 'shape of the day' instruction based on the daily alea roll."""
+    if alea >= 0.75:
+        return (
+            "TODAY'S SHAPE — High energy: you are focused and motivated today. "
+            "You go the extra mile: cover every bonus requirement, add depth to your analysis, "
+            "and write a thorough, multi-paragraph answer to the brief's open question."
+        )
+    if alea >= 0.45:
+        return (
+            "TODAY'S SHAPE — Normal energy: you work at your usual pace. "
+            "Cover the required items as your proficiency tier dictates; "
+            "give a solid but concise answer to the brief's open question."
+        )
+    return (
+        "TODAY'S SHAPE — Low energy: you are a bit distracted today. "
+        "Within your proficiency tier, skip optional items and advanced requirements first. "
+        "Give only a brief, surface-level answer to the brief's open question."
+    )
+
+
+def _build_system_prompt(proficiency: float, alea: float, deliverable_format: str) -> str:
     p = _sim_prompts()
-    persona, instructions = _persona_and_instructions(mode, proficiency)
-    guidance_key = "notebook" if deliverable_format == "IPYNB" else "pbip"
-    format_guidance = p["format_guidance"][guidance_key].rstrip()
+    persona, instructions = _persona_and_instructions(proficiency)
+    deliverable = "notebook" if deliverable_format == "IPYNB" else "powerbi"
+    format_guidance = _sim_deliverable_templates(deliverable)["format_guidance"].rstrip()
     return fmt(
         p["system_prompt"],
         persona=persona,
         deliverable_format=deliverable_format,
         instructions=instructions,
+        alea_guidance=_alea_guidance(alea),
         format_guidance=format_guidance,
     )
 
 
 def _build_task_prompt(
-    mode: str,
     proficiency: float,
     deliverable_format: str,
     validation_error: str | None = None,
@@ -126,8 +162,8 @@ def _build_task_prompt(
     format_label = (
         "Jupyter Notebook" if deliverable_format == "IPYNB" else "Power BI Desktop (PBIP)"
     )
-    prof_desc = "perfect (expert)" if mode == "perfect" else f"{proficiency:.0%} proficiency"
-    prompt = fmt(p["task_prompt"], mode=mode, prof_desc=prof_desc, format_label=format_label)
+    prof_desc = f"{proficiency:.0%} proficiency"
+    prompt = fmt(p["task_prompt"], prof_desc=prof_desc, format_label=format_label)
     if validation_error:
         prompt += "\n" + fmt(p["task_prompt_retry_suffix"], validation_error=validation_error)
     return prompt
@@ -137,29 +173,17 @@ def _build_task_prompt(
 
 
 def _validate_simulation(output_dir: Path, deliverable_format: str) -> tuple[bool, str]:
-    """Check that the agent produced non-trivial output in the starter project."""
+    """Dispatch simulation output validation to the appropriate deliverable subpackage."""
     starter_dir = output_dir / "starter"
     if not starter_dir.exists():
         return False, "starter/ directory missing — source artifacts may not have been copied"
 
     if deliverable_format == "IPYNB":
-        notebook = starter_dir / "notebook.ipynb"
-        if not notebook.exists():
-            return False, "starter/notebook.ipynb not found"
-        size = len(notebook.read_bytes())
-        if size < 500:
-            return False, f"notebook.ipynb too small ({size} bytes) — does not appear modified"
-    else:  # PBIP
-        if not list(starter_dir.glob("*.pbip")):
-            return False, "No .pbip file found in starter/"
-        has_tmdl = bool(list(starter_dir.rglob("*.tmdl")))
-        has_report = (starter_dir / "Assessment.Report/pages/pages.json").exists() or (
-            starter_dir / "Assessment.Report/report.json"
-        ).exists()
-        if not has_tmdl and not has_report:
-            return False, "No TMDL or report files in starter/ — project was not modified"
+        from .notebook import validate_simulation as _validate
+    else:
+        from .powerbi import validate_simulation as _validate
 
-    return True, "simulation output validated"
+    return _validate(starter_dir)
 
 
 # ── Anthropic auth error detection ─────────────────────────────────
@@ -188,21 +212,36 @@ def _is_anthropic_auth_error(exc: Exception) -> bool:
 
 def build_candidate_graph(
     output_dir: Path,
-    mode: str,
     proficiency: float,
     deliverable_format: str,
+    alea: float | None = None,
 ) -> Any:
     """Compile and return a LangGraph for simulating a candidate solving an assessment.
 
-    The graph runs a single agentic task with up to SIM_MAX_RETRIES retries.
-    Nodes are closures over output_dir, mode, proficiency, and deliverable_format.
+    Args:
+        output_dir: Root directory containing brief/, starter/, etc.
+        proficiency: Skill level 0.0–1.0.  1.0 = perfect expert submission.
+        deliverable_format: "PBIP" or "IPYNB".
+        alea: Daily performance variation 0.0–1.0.  If None, a random value is drawn.
+              High (≥0.75) → extra effort; low (<0.45) → distracted/cutting corners.
     """
-    _allowed_tools = {"write_file", "read_file", "list_files", "mark_subtask_complete"}
+    import random as _random
+
+    if alea is None:
+        alea = _random.random()
+
+    _allowed_tools = {
+        "write_file",
+        "read_file",
+        "list_files",
+        "validate_json",
+        "mark_subtask_complete",
+    }
     all_schemas, all_dispatch = make_tools(output_dir)
     schemas = [s for s in all_schemas if s["name"] in _allowed_tools]
     dispatch = {k: v for k, v in all_dispatch.items() if k in _allowed_tools}
 
-    system_prompt = _build_system_prompt(mode, proficiency, deliverable_format)
+    system_prompt = _build_system_prompt(proficiency, alea, deliverable_format)
     llm_claude = AnthropicLLM()
     llm_openai = OpenAILLM()
     _use_openai: list[bool] = [False]
@@ -249,14 +288,11 @@ def build_candidate_graph(
 
     _task_start: list[float] = [0.0]
 
-    def prepare_simulate(
-        state: CandidateState,
-    ) -> Command[Literal["run_simulate"]]:
+    def prepare_simulate(state: CandidateState) -> Command[Literal["run_simulate"]]:
         _task_start[0] = time.perf_counter()
         attempt = state["retry_count"] + 1
         LOGGER.info("\n━━━ [simulate_candidate] attempt %d/%d ━━━", attempt, _SIM_MAX_RETRIES)
         prompt = _build_task_prompt(
-            state["mode"],
             state["proficiency"],
             state["deliverable_format"],
             state.get("validation_error"),
@@ -266,9 +302,7 @@ def build_candidate_graph(
             update={"messages": [HumanMessage(content=prompt)], "validation_error": None},
         )
 
-    def run_simulate(
-        state: CandidateState,
-    ) -> Command[Literal["validate_simulate"]]:
+    def run_simulate(state: CandidateState) -> Command[Literal["validate_simulate"]]:
         msgs, in_tok, out_tok, model = _invoke(state["messages"])
         elapsed = time.perf_counter() - _task_start[0]
         LOGGER.info(
@@ -300,9 +334,7 @@ def build_candidate_graph(
             update={"validation_error": msg, "retry_count": new_retry},
         )
 
-    def fail_simulate(
-        state: CandidateState,
-    ) -> Command[Literal["__end__"]]:
+    def fail_simulate(state: CandidateState) -> Command[Literal["__end__"]]:
         LOGGER.error(
             "\n✗ [simulate_candidate] failed after %d attempts: %s",
             _SIM_MAX_RETRIES,
