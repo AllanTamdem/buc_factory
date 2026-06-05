@@ -1,0 +1,33 @@
+# Jupyter Notebook format guidance for candidate simulation.
+# Injected as {format_guidance} in the simulation system prompt.
+
+format_guidance: |
+  NOTEBOOK GUIDANCE:
+
+  STRICT RULE — write_file for notebook.ipynb:
+  You MUST pass BOTH `path` AND `content` in a single write_file call.
+  The notebook is ONE file — you cannot split it across two calls.
+  To stay within the call limit:
+  - Keep code cell source strings SHORT: one statement per line, no prose in code cells.
+  - Keep markdown cell source strings SHORT: 1-3 sentences per cell.
+  - Stub complex analysis with a comment (e.g. "# your code here") rather than writing
+    a full implementation — the candidate is expected to complete it.
+  - Never write explanatory paragraphs or long docstrings inside the notebook JSON.
+  If you find the notebook JSON is growing too large, trim cell content further.
+  A compact, valid notebook beats a complete but unsendable one.
+
+  WORKFLOW:
+  1. Read starter/notebook.ipynb to understand its existing structure and cell layout.
+  2. Build the complete updated notebook JSON in memory (all cells in one object).
+  3. Write the full notebook in a SINGLE write_file call with both path and content.
+     Confirm success by checking the return value (it should say "wrote N chars to …").
+
+  NOTEBOOK FORMAT RULES:
+  - Valid Jupyter 4 notebook: nbformat=4, nbformat_minor=5
+  - Code cells:     {"cell_type":"code","execution_count":null,"metadata":{},"outputs":[],"source":[...]}
+  - Markdown cells: {"cell_type":"markdown","metadata":{},"source":[...]}
+  - source is a JSON array of strings, one string per line (include "\n" at line ends
+    except the last line of the cell).
+  - Write analysis code in code cells using pandas and the CSV data in starter/data/
+  - Write answers to brief questions in new Markdown cells
+  - All double-quotes inside the JSON strings must be escaped as \"

@@ -1,0 +1,128 @@
+# Power BI (PBIP) generate_starter prompt template.
+# Loaded by prompting._load_deliverable_templates("powerbi").
+# Provider-specific overrides go in templates_openai_patch.yml.
+
+power_bi: |
+  Sub-task 6/8: Generate the Power BI starter (PBIP).
+
+  The data schema (entity names and column definitions) is pre-loaded below —
+  do NOT call read_file for data_schema.json.
+
+  ## DATA SCHEMA
+  {data_schema_json}
+
+  Build under "starter/" using PBIR format (Power BI Desktop 2.154 / May 2026):
+
+  IMPORTANT — directory layout changed in Power BI Desktop 2.154:
+  report.json and pages/ now live inside Assessment.Report/definition/, NOT at root.
+
+    - Assessment.pbip
+    - Assessment.SemanticModel/.platform  (type "SemanticModel", version "2.0")
+    - Assessment.SemanticModel/definition.pbism
+    - Assessment.SemanticModel/definition/model.tmdl, database.tmdl
+    - Assessment.SemanticModel/definition/expressions/DataPath.tmdl
+    - Assessment.SemanticModel/definition/tables/<Entity>.tmdl  (one per entity)
+    - Assessment.Report/.platform  (type "Report", version "2.0")
+    - Assessment.Report/definition.pbir
+    - Assessment.Report/definition/version.json           ← NEW required file
+    - Assessment.Report/definition/report.json            ← was at root in older PBI
+    - Assessment.Report/definition/pages/pages.json       ← was at root in older PBI
+    - Assessment.Report/definition/pages/<PageHexId>/page.json
+    - Assessment.Report/definition/pages/<PageHexId>/visuals/starter_placeholder/visual.json
+    - Assessment.Report/StaticResources/SharedResources/BaseThemes/CY26SU05.json  ← renamed
+
+  TMDL FORMAT — tab-indented declarative text. NEVER write "createOrReplace"
+  anywhere in a TMDL file (that keyword is TMSL scripting syntax, not TMDL).
+
+  database.tmdl — exactly two lines:
+    database Database
+    	compatibilityLevel: 1601
+
+  model.tmdl — culture, settings, and relationships ONLY. Do NOT write any
+  "ref table" or "ref expression" lines — tables and expressions are auto-discovered
+  from their subdirectories in TMDL v4 and "ref" lines cause a parse error:
+    model Model
+    	culture: <BCP-47 tag matching the run language/location, e.g. fr-FR, nl-NL, en-GB>
+    	defaultPowerBIDataSourceVersion: powerBI_V3
+    	discourageImplicitMeasures
+
+    	annotation PBI_QueryOrder = ["Entity1", "Entity2", ...]
+
+  expressions/DataPath.tmdl — single parameter candidates update to load their data:
+    expression DataPath = "C:\data" meta [IsParameterQuery = true, Type = "Text", IsParameterQueryRequired = true]
+    	lineageTag: <any-uuid>
+
+  tables/<Entity>.tmdl — load via DataPath parameter (NO hardcoded path):
+    table Entity
+    	column col_name
+    		dataType: string
+    		summarizeBy: none
+    		sourceColumn: col_name
+
+    	partition Entity = m
+    		mode: import
+    		source =
+    			let
+    				Source = Csv.Document(File.Contents(DataPath & "\Entity.csv"),
+    					[Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
+    				Promoted = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+    				Typed = Table.TransformColumnTypes(Promoted,
+    					{{"col_name", type text}}, "en-US")
+    			in
+    				Typed
+
+    	annotation PBI_ResultType = Table
+
+  CRITICAL — column names: declare ONLY the columns present in DATA SCHEMA.
+  Never add computed date-hierarchy columns (Month, Mois, Quarter, Trimestre, Year,
+  Année, Semaine, Week) as sourceColumn — they don't exist in the CSV and will cause
+  load errors. Date granularity is computed in DAX measures, not stored in the table.
+
+  PBIR file contents (all paths relative to starter/):
+
+  definition.pbir (at Assessment.Report/ root — NOT inside definition/):
+    {{"version": "4.0", "datasetReference": {{"byPath": {{"path": "../Assessment.SemanticModel"}}, "byConnection": null}}}}
+
+  definition/version.json:
+    {{"version":"1.0"}}
+
+  definition/report.json — global config, NO "sections" key:
+    {{"config": "{{\"version\":\"5.43\",\"themeCollection\":{{\"baseTheme\":{{\"name\":\"CY26SU05\"}}}}}}", "layoutOptimization": 0, "resourcePackages": [{{"resourcePackage": {{"disabled": false, "items": [{{"name": "theme", "path": "StaticResources/SharedResources/BaseThemes/CY26SU05.json", "type": 202}}], "name": "SharedResources", "type": 2}}}}], "settings": {{"useStylableVisualContainerHeader": true}}}}
+
+  definition/pages/pages.json — one entry per page:
+    {{"pages": [{{"name": "<PageHexId>", "displayName": "Page 1", "ordinal": 0}}]}}
+
+  definition/pages/<PageHexId>/page.json — use hex UUID for page name (20 hex chars):
+    {{"name": "<PageHexId>", "displayName": "Page 1", "config": "{{\"version\":\"5.43\",\"themeCollection\":{{\"baseTheme\":{{\"name\":\"CY26SU05\"}}}},\"objects\":{{}}}}", "displayOption": 1, "height": 720, "width": 1280, "filters": "[]"}}
+
+  The starter has ONE page with a mandatory placeholder textbox — Power BI 2.154
+  crashes with 'visualContainers' undefined if a page has zero visual containers.
+  Candidates can delete the placeholder when they add their own visuals.
+
+  definition/pages/<PageHexId>/visuals/starter_placeholder/visual.json:
+    {{"name": "starter_placeholder", "position": {{"x": 490, "y": 330, "z": 1000, "width": 300, "height": 60}}, "config": "{{\"name\":\"starter_placeholder\",\"layouts\":[{{\"id\":0,\"position\":{{\"x\":490,\"y\":330,\"z\":1000,\"width\":300,\"height\":60}},\"displayState\":{{\"mode\":0}}}}],\"singleVisual\":{{\"visualType\":\"textbox\",\"drillFilterOtherVisuals\":true,\"objects\":{{}}}}}}", "filters": "[]", "tabOrder": 0}}
+
+  NOTE: The .platform files are required by Power BI Desktop to identify
+  artifact types. Without them the project will not open.
+  Use EXACTLY this $schema value (copy verbatim — do not invent a URL):
+    "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json"
+  Other required fields: metadata.type, metadata.displayName,
+  config.version ("2.0"), and config.logicalId (any UUID).
+
+  Tables load data via the DataPath parameter: File.Contents(DataPath & "\Entity.csv").
+  Candidates open Power BI Desktop, go to Data → Transform Data → Manage Parameters,
+  and set DataPath to the absolute path of the data folder — that single update
+  refreshes all tables. Never use a hardcoded path in File.Contents.
+
+  CRITICAL — DECIMAL SEPARATOR / DATE FORMAT:
+  CSV files are generated by Python and ALWAYS use ISO dates (YYYY-MM-DD) and
+  "." as the decimal separator, regardless of model culture.
+  You MUST pass "en-US" as the third argument to Table.TransformColumnTypes
+  in every partition M query — otherwise numeric columns parse as null and
+  ISO dates are misread when the model culture uses a different convention:
+
+    Typed = Table.TransformColumnTypes(Promoted, {{"col", type number}, ...}, "en-US")
+
+  Write ALL files first. Once every file is written, validate all JSON
+  files in a single batch (one validate_json call per JSON file, back to back).
+  Then call mark_subtask_complete.

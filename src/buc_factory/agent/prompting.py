@@ -5,9 +5,11 @@ from typing import Any, cast
 import yaml
 
 from ..utils import fmt
+from .deliverables import get_deliverable
 from .entity import DomainConfig
 
 _PROMPTS_CACHE: dict[str, dict[str, Any]] = {}
+_DELIVERABLE_CACHE: dict[str, dict[str, Any]] = {}
 
 
 def _load_yaml(fname: str) -> dict[str, Any]:
@@ -19,6 +21,15 @@ def _load_yaml(fname: str) -> dict[str, Any]:
             .read_text(encoding="utf-8")
         ),
     )
+
+
+def _load_deliverable_yaml(deliverable: str, filename: str) -> dict[str, Any]:
+    pkg = f"buc_factory.agent.deliverables.{deliverable}"
+    try:
+        content = importlib.resources.files(pkg).joinpath(filename).read_text(encoding="utf-8")
+        return cast(dict[str, Any], yaml.safe_load(content))
+    except Exception:
+        return {}
 
 
 def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
@@ -44,9 +55,20 @@ def _prompts(provider: str = "claude") -> dict[str, Any]:
     return _PROMPTS_CACHE[provider]
 
 
-# ──────────────────────────────────────────────────────────────────
-# Domain-aware system prompt
-# ──────────────────────────────────────────────────────────────────
+def _deliverable_templates(deliverable: str, provider: str = "claude") -> dict[str, Any]:
+    """Load and cache the generate_starter templates for a deliverable subpackage."""
+    cache_key = f"{deliverable}:{provider}"
+    if cache_key not in _DELIVERABLE_CACHE:
+        base = _load_deliverable_yaml(deliverable, "templates.yml")
+        if provider != "claude":
+            patch = _load_deliverable_yaml(deliverable, f"templates_{provider}_patch.yml")
+            if patch:
+                base = _deep_merge(base, patch)
+        _DELIVERABLE_CACHE[cache_key] = base
+    return _DELIVERABLE_CACHE[cache_key]
+
+
+# ── Domain-aware system prompt ─────────────────────────────────────
 
 
 def raw_system_template(provider: str = "claude") -> str:
@@ -58,9 +80,7 @@ def build_system(cfg: DomainConfig, provider: str = "claude") -> str:
     return fmt(_prompts(provider)["system"], **vars(cfg))
 
 
-# ──────────────────────────────────────────────────────────────────
-# Sub-task prompts
-# ──────────────────────────────────────────────────────────────────
+# ── Tool classification helpers ────────────────────────────────────
 
 
 def _is_python(tool: str) -> bool:
@@ -86,12 +106,11 @@ def _prep_layer(tool: str) -> str:
     return "data preparation layer"
 
 
-def _bootstrap_prompt(cfg: DomainConfig, p: dict[str, Any]) -> str:
-    """Build the bootstrap_domain prompt for the infer (partial/no-config) path only.
+# ── Sub-task prompts ───────────────────────────────────────────────
 
-    The fully-specified path (both dimensions and entities set) bypasses the LLM
-    entirely in graph.py and never calls this function.
-    """
+
+def _bootstrap_prompt(cfg: DomainConfig, p: dict[str, Any]) -> str:
+    """Build the bootstrap_domain prompt for the infer (partial/no-config) path only."""
     parts = [p["infer_preamble"]]
     if cfg.dimensions is None:
         parts.append(p["infer_dims_section"])
@@ -107,19 +126,18 @@ def _bootstrap_prompt(cfg: DomainConfig, p: dict[str, Any]) -> str:
     )
 
 
-def _starter_prompt(
-    cfg: DomainConfig, p: dict[str, Any], data_schema_json: str | None = None
-) -> str:
-    tool = cfg.tool.lower()
-    deliverable_fmt = cfg.deliverable_format.upper()
+def _starter_prompt(cfg: DomainConfig, provider: str, data_schema_json: str | None = None) -> str:
+    """Return the generate_starter prompt from the appropriate deliverable templates."""
     schema = data_schema_json or "(not yet available)"
+    deliverable = get_deliverable(cfg)
+    tmpl = _deliverable_templates(deliverable, provider)
 
-    if "power bi" in tool or deliverable_fmt == "PBIP":
-        return fmt(p["power_bi"], data_schema_json=schema)
-    if _is_python(cfg.tool) or deliverable_fmt == "IPYNB":
+    if deliverable == "powerbi":
+        return fmt(tmpl["power_bi"], data_schema_json=schema)
+    if deliverable == "notebook":
         key = "python_ds" if "scientist" in cfg.role.lower() else "python_da"
-        return fmt(p[key], data_schema_json=schema)
-    return fmt(p["generic"], tool=cfg.tool, deliverable_format=cfg.deliverable_format)
+        return fmt(tmpl[key], data_schema_json=schema)
+    return fmt(tmpl.get("generic", ""), tool=cfg.tool, deliverable_format=cfg.deliverable_format)
 
 
 def task_prompt(
@@ -162,7 +180,7 @@ def task_prompt(
             data_schema_json=data_schema_json or _na,
             candidate_brief=candidate_brief or _na,
         ),
-        "generate_starter": _starter_prompt(cfg, p["generate_starter"], data_schema_json),
+        "generate_starter": _starter_prompt(cfg, provider, data_schema_json),
         "write_recruiter_solution": fmt(
             p["write_recruiter_solution"],
             **ctx,

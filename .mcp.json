@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "buc-factory": {
+      "command": "uv",
+      "args": ["run", "buc-factory-mcp"],
+      "cwd": "/Users/allan.tamdem/Documents/Workspace/buc_factory"
+    }
+  }
+}

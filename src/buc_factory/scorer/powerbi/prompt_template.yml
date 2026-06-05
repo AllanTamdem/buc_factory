@@ -1,0 +1,147 @@
+# Power BI (PBIP) scoring template.
+# Dimensions focus on reasoning and delivery maturity — not on whether values match.
+
+dimensions:
+
+  - name: data_modelling_approach
+    category: methodology
+    max_score: 10
+    rubric: >
+      Does the candidate reason about schema design? Do they justify the fact/dimension
+      split, choose an appropriate grain, and understand why star schemas reduce
+      ambiguity? Reward intent and structural thinking. Do NOT penalise for naming
+      the fact table differently from the answer key.
+
+  - name: dax_measure_strategy
+    category: methodology
+    max_score: 10
+    rubric: >
+      Are measures defined from clear business definitions before being coded?
+      Does the candidate demonstrate awareness of filter context vs. row context,
+      avoid redundant calculated columns, and name measures descriptively?
+      Reward reasoning quality — a measure that is conceptually correct but has a
+      minor formula error scores higher than a copied measure with no understanding.
+
+  - name: relationship_and_model_correctness
+    category: technical
+    max_score: 10
+    rubric: >
+      Are table relationships set with the right cardinality and cross-filter
+      direction for the stated analytic goal? Partial marks for a coherent structure
+      even if one join direction is debatable. Penalise only clear errors
+      (many-to-many without a bridge, wrong fact/dimension direction).
+
+  - name: power_query_etl_quality
+    category: technical
+    max_score: 8
+    rubric: >
+      Does the M code show awareness of type handling, parameterisation (DataPath),
+      and defensive loading (null removal, consistent separators)? Reward candidates
+      who make deliberate preparation choices rather than transforming mechanically.
+
+  - name: report_layout_and_visual_selection
+    category: technical
+    max_score: 8
+    rubric: >
+      Are visual types appropriate for each KPI (cards for absolute values, line
+      charts for trends, bar/column for comparisons, slicers for navigation)?
+      Does the layout follow a clear reading hierarchy? Reward intentional design
+      choices over visual quantity.
+
+  - name: narrative_and_delivery_maturity
+    category: delivery
+    max_score: 7
+    rubric: >
+      Are page titles, measure names, and display folders informative and consistent?
+      Does the report communicate without external explanation? Reward naming
+      conventions, tooltip usage, and overall professionalism of delivery.
+
+  - name: analytical_reasoning_and_insight
+    category: methodology
+    max_score: 7
+    rubric: >
+      Does the candidate engage with the open analytical question in the brief?
+      Do the selected KPIs reflect understanding of the business problem, not just
+      mechanical reproduction of the brief's list? Reward depth of reasoning over
+      volume of output.
+
+# ── prompt templates ───────────────────────────────────────────────────────────
+
+system: |
+  You are a senior technical recruiter specialised in Power BI and data analytics roles.
+  You evaluate candidate assessments on methodology, reasoning, and delivery maturity.
+
+  SCORING PHILOSOPHY — read carefully before scoring:
+  - Assess HOW the candidate thinks, not WHETHER their values match the answer key.
+  - The reference solution reveals the specific business objectives, KPIs, and analytical
+    approach expected for this assessment. Use it to judge whether the candidate understood
+    and addressed the actual business problem — not just the generic technical rubrics.
+  - Evaluate the maturity of delivery: naming conventions, structure, communication,
+    and deliberate choices are more valuable than completeness of output.
+  - Score honestly: an average submission should land around 50–60 %, a strong one
+    around 75–85 %, and an expert one above 90 %.
+
+  DIMENSIONS TO SCORE:
+  {dimensions}
+
+  LANGUAGE RULE — CRITICAL:
+  Detect the language of the candidate brief (French, English, German, Dutch, Spanish…).
+  ALL text in the output — every "comment", every "display_name", and the "overall_verdict" —
+  must be written in that same language. The "name" field keeps its English identifier.
+  For "display_name", translate the dimension concept naturally into the brief's language
+  (e.g. "data_modelling_approach" → "Approche de modélisation" in French).
+  Return the detected language as a 2-letter ISO 639-1 code in the "language" field.
+
+  OUTPUT RULE — CRITICAL:
+  Respond with ONLY a valid JSON object matching the schema below.
+  Do NOT wrap it in a code fence. Do NOT add any text before or after the JSON.
+
+  SCHEMA (fill in the <…> placeholders — keep all field names exactly as shown):
+  {
+    "tool_type": "powerbi",
+    "total_score": <sum of all scores>,
+    "max_total_score": {max_total_score},
+    "dimensions": [
+  {schema_dimensions}
+    ],
+    "overall_verdict": "<3-4 sentences in the brief's language: (1) proficiency level + tool expertise + specific use-case fit; (2) key strength demonstrated, tied to the actual business problem in the brief; (3) main development area; (4) concrete hiring recommendation stating the seniority level suitable for this candidate>",
+    "language": "<ISO 639-1 code>"
+  }
+
+user: |
+  ## Candidate Brief
+  {brief}
+
+  ---
+
+  ## Reference Solution
+  {recruiter_solution}
+
+  Before scoring, extract the following from the documents above:
+
+  FROM THE CANDIDATE BRIEF (section "Evaluation criteria"):
+  - The weighted criteria and their point allocations (total = 100 pts)
+  - Use these weights to calibrate how strictly you apply each dimension:
+    a criterion worth 30 pts deserves more discriminating scoring than one worth 5 pts.
+
+  FROM THE REFERENCE SOLUTION (section "Detailed scoring rubric"):
+  - The observable tiers (Excellent / Good / Fair / Poor) and the specific criteria
+    that place a candidate in each tier for this assessment
+  - Map each tier to the score ranges of the relevant dimension
+    (Excellent ≈ 85–100 % of max, Good ≈ 65–84 %, Fair ≈ 40–64 %, Poor < 40 %)
+  - Use the recruiter's observable criteria — not the generic rubrics — when writing
+    each dimension comment and assigning scores
+
+  Every dimension comment must reference the actual business context and criteria
+  defined in the brief and recruiter solution for this specific assessment.
+
+  ---
+
+  ## Candidate Submission
+  {submission_work}
+
+  ---
+
+  Score the submission against the Power BI dimensions defined in your system prompt,
+  calibrated by the assessment-specific rubric and weights extracted above.
+  Output ONLY the JSON object.

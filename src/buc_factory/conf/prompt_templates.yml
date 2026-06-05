@@ -129,6 +129,17 @@ tasks:
     {role} should detect (wrong types, locale-specific date formats,
     unit mismatches, duplicates, etc.).
 
+    FK GRAPH RULE — no alternative paths: the FK graph must be a flat star where
+    only the main fact table holds FK links. If Table A has fk_to Table B and
+    Table B has fk_to Table C, Table A must NOT also have fk_to Table C — that
+    creates two paths A→C and Power BI rejects ambiguous relationships.
+    In case of conflict, remove the direct FK (keep the transitive one only if
+    the intermediate table is needed; otherwise flatten the schema).
+
+    DATE COLUMN RULE — raw dates only: never declare Month, Mois, Trimestre,
+    Quarter, Year, Année, Semaine, or any other date-derived column. Store raw
+    date/datetime values and let the semantic layer compute time granularity.
+
     Then call mark_subtask_complete.
 
   generate_data_script: |
@@ -157,6 +168,15 @@ tasks:
         data themselves.
       - Never read from disk at runtime; all data is generated programmatically
       - Guarantee referential integrity (every FK value resolves to a PK)
+      - DATE FORMAT — all date/datetime columns MUST be written in ISO 8601 format
+        (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS). Power BI's Power Query M parser reads
+        these correctly regardless of model culture when "en-US" locale is passed to
+        Table.TransformColumnTypes. NEVER write dates in locale-specific formats such
+        as DD/MM/YYYY or MM/DD/YYYY for non-trap columns — they break data refresh.
+        If the schema declares a locale-format date as a deliberate trap, use that
+        format ONLY for the trap column and document it clearly in the schema.
+      - DECIMAL FORMAT — write all numeric values with "." as the decimal separator.
+        Python pandas/numpy always do this by default; do not override it.
       - Faithfully inject every trap documented in the schema
 
     Step 2 — run with run_python("starter/generate_data.py") and check stdout for errors.
@@ -166,161 +186,7 @@ tasks:
 
     Only call mark_subtask_complete after validation passes.
 
-  generate_starter:
-    power_bi: |
-      Sub-task 6/8: Generate the Power BI starter (PBIP).
-
-      The data schema (entity names and column definitions) is pre-loaded below —
-      do NOT call read_file for data_schema.json.
-
-      ## DATA SCHEMA
-      {data_schema_json}
-
-      Build under "starter/" using PBIR format (Power BI 2.150+):
-        - Assessment.pbip
-        - Assessment.SemanticModel/.platform  (type "SemanticModel", version "2.0")
-        - Assessment.SemanticModel/definition.pbism  (content: {{"version": "4.0", "settings": {{}}}})
-        - Assessment.SemanticModel/definition/model.tmdl, database.tmdl
-        - Assessment.SemanticModel/definition/tables/<Entity>.tmdl  (one per entity,
-          types declared, NO relationships, NO measures)
-        - Assessment.Report/.platform  (type "Report", version "2.0")
-        - Assessment.Report/definition.pbir  (version "4.0" — PBIR format, not legacy)
-        - Assessment.Report/report.json  (global config only — NO "sections" key)
-        - Assessment.Report/pages/pages.json  (page index listing all pages)
-        - Assessment.Report/pages/<PageId>/page.json  (one per page, NO visuals here)
-        - Assessment.Report/StaticResources/SharedResources/BaseThemes/theme.json
-
-      PBIR file contents:
-
-      definition.pbir — use version "4.0":
-        {{"version": "4.0", "datasetReference": {{"byPath": {{"path": "../Assessment.SemanticModel"}}, "byConnection": null}}}}
-
-      report.json — global config, NO "sections" key:
-        {{"config": "{{\"version\":\"5.43\",\"themeCollection\":{{\"baseTheme\":{{\"name\":\"CY24SU10\"}}}}}}", "layoutOptimization": 0, "resourcePackages": [{{"resourcePackage": {{"disabled": false, "items": [{{"name": "theme", "path": "StaticResources/SharedResources/BaseThemes/theme.json", "type": 202}}], "name": "SharedResources", "type": 2}}}}], "settings": {{"useStylableVisualContainerHeader": true}}}}
-
-      pages/pages.json — one entry per page:
-        {{"pages": [{{"name": "ReportSection1", "displayName": "Page 1", "ordinal": 0}}]}}
-
-      pages/<PageId>/page.json — page metadata (NO visuals here):
-        {{"name": "ReportSection1", "displayName": "Page 1", "config": "{{}}", "displayOption": 1, "height": 720, "width": 1280, "filters": "[]"}}
-
-      The starter has ONE empty page (no visuals — candidates add them). The candidate
-      assessment task is to populate pages with visuals via their solution.
-
-      NOTE: The .platform files are required by Power BI Desktop to identify
-      artifact types. Without them the project will not open.
-      Use EXACTLY this $schema value (copy verbatim — do not invent a URL):
-        "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json"
-      Other required fields: metadata.type, metadata.displayName,
-      config.version ("2.0"), and config.logicalId (any UUID).
-
-      Tables connect to ../data/*.csv via Csv.Document with relative paths.
-
-      CRITICAL — CULTURE / DECIMAL SEPARATOR:
-      The model uses culture: fr-FR, but CSV files are generated by Python and
-      always use "." as the decimal separator. You MUST pass "en-US" as the third
-      argument to Table.TransformColumnTypes in every partition M query, otherwise
-      numeric columns parse as null in fr-FR mode (e.g. 5668.67 → null):
-
-        Typed = Table.TransformColumnTypes(Promoted, {{"col", type number}, ...}, "en-US")
-
-      Write ALL files first. Once every file is written, validate all JSON
-      files in a single batch (one validate_json call per JSON file, back to back).
-      Then call mark_subtask_complete.
-
-    python_da: |
-      Sub-task 6/8: Generate the Python Data Analyst starter project.
-
-      DATA SCHEMA
-      {data_schema_json}
-
-      Write under "starter/":
-
-      requirements.txt — one package per line, no version pins:
-        pandas, numpy, matplotlib, seaborn, jupyter
-
-      notebook.ipynb — valid Jupyter 4 notebook (nbformat=4, nbformat_minor=5).
-      Cell format: code cells → cell_type "code", execution_count null, metadata {{}},
-      outputs [], source [list-of-strings]. Markdown cells → cell_type "markdown",
-      metadata {{}}, source [list-of-strings].
-
-      Cells in order:
-        1. [md]   Title + "Launch from the starter/ folder."
-        2. [code] Imports: pandas as pd, numpy as np, matplotlib.pyplot as plt,
-                  seaborn as sns, warnings; %matplotlib inline;
-                  warnings.filterwarnings('ignore'); pd.set_option('display.max_columns', None);
-                  sns.set_theme(style='whitegrid')
-        3. [code] Load each entity: <snake_case_name> = pd.read_csv("data/<file.csv>")
-        4. [code] Preview loop: for each df print shape, display(head(3)), dtypes
-        5. [md]   "## 1. Data Quality Check — nulls, duplicates, suspicious values"
-        6. [code] Null counts + duplicate check per dataframe
-        7. [md]   "## 2. Data Preparation — joins, type fixes, trap handling"
-        8. [code] # your preparation code here
-        9. [md]   "## 3. Analysis & KPIs"
-       10. [code] # your analysis code here
-       11. [md]   "## 4. Visualizations"
-       12. [code] # your charts here
-       13. [md]   "## 5. Open Question"
-       14. [md]   "## 6. Conclusion"
-
-      README.md — install (pip install -r requirements.txt) and launch
-      (cd starter && jupyter notebook notebook.ipynb) instructions.
-
-      Validate notebook.ipynb with validate_json. Then call mark_subtask_complete.
-
-    python_ds: |
-      Sub-task 6/8: Generate the Python Data Scientist starter project.
-
-      DATA SCHEMA
-      {data_schema_json}
-
-      Write under "starter/":
-
-      requirements.txt — one package per line, no version pins:
-        pandas, numpy, matplotlib, seaborn, scikit-learn, xgboost, tensorflow, jupyter
-
-      notebook.ipynb — valid Jupyter 4 notebook. Same cell format rules as above.
-
-      Cells in order:
-        1. [md]   Title + "Launch from the starter/ folder."
-        2. [code] Full ML imports: pandas, numpy, matplotlib, seaborn; from sklearn:
-                  train_test_split, Pipeline, StandardScaler, LabelEncoder,
-                  classification_report, confusion_matrix, roc_auc_score,
-                  mean_squared_error, r2_score; import xgboost as xgb;
-                  import tensorflow as tf, from tensorflow import keras, layers;
-                  warnings; %matplotlib inline; sns.set_theme(style='whitegrid');
-                  print(f"TF {{tf.__version__}}  |  XGB {{xgb.__version__}}")
-        3. [code] Load each entity: <snake_case_name> = pd.read_csv("data/<file.csv>")
-        4. [code] Preview loop: for each df print shape, display(head(3)), dtypes
-        5. [md]   "## 1. Data Quality Check — nulls, class imbalance, type issues, traps"
-        6. [code] Null counts, duplicate check, value_counts for categoricals
-        7. [md]   "## 2. Feature Engineering"
-        8. [code] # your feature engineering code here
-        9. [md]   "## 3. Modelling"
-       10. [code] Scaffold: define TARGET/FEATURES; train_test_split(test_size=0.2,
-                  random_state=42, stratify=y); XGBClassifier stub (n_estimators=200,
-                  random_state=42); commented Keras stub (Input → Dense → Dropout → sigmoid)
-       11. [md]   "## 4. Evaluation"
-       12. [code] # your evaluation code here
-       13. [md]   "## 5. Visualizations"
-       14. [code] # your charts here
-       15. [md]   "## 6. Open Question"
-       16. [md]   "## 7. Conclusion"
-
-      README.md — install and launch instructions.
-
-      Validate notebook.ipynb with validate_json. Then call mark_subtask_complete.
-
-    generic: |
-      Sub-task 6/8: Generate the starter for {tool}.
-
-      Build a minimal openable project under "starter/" appropriate for
-      {tool} ({deliverable_format}). Include source-data wiring to
-      ../data/*.csv, schema/type declarations for each entity, and an empty
-      report/dashboard surface.
-
-      Document the structure in starter/README.md.
-      Then call mark_subtask_complete.
+  # generate_starter prompts live in agent/deliverables/<tool>/templates.yml
 
   write_recruiter_solution: |
     Sub-task 7/8: Write the recruiter solution.
@@ -349,6 +215,16 @@ tasks:
 
     ## DATA SCHEMA
     {data_schema_json}
+
+    RELATIONSHIP MODEL: define exactly one relationship per FK declared in the schema
+    (using the PK/FK pairs shown). Each pair of tables must have at most one path —
+    if a transitive path A→B→C already exists, do NOT also define A→C directly.
+
+    DATE/TIME GRANULARITY in {calc_language} measures: always derive month, quarter,
+    or year from the raw date column using {calc_language} functions. Never reference
+    a standalone [Month], [Mois], [Trimestre], [Quarter], [Semaine] field unless it
+    is explicitly listed as a column in the DATA SCHEMA — it won't exist in the data.
+    Example for DAX: MONTH([date_col]) or FORMAT([date_col], "MMM YYYY").
 
     Then call mark_subtask_complete.
 

@@ -32,7 +32,7 @@ import time
 import zipfile
 from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from pathlib import Path
 from threading import Lock
@@ -45,6 +45,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from ..agent.deliverables.powerbi import sanitize_pbip_starter
 from ..agent.entity import PLAN, BucState, DomainConfig
 from ..agent.graph import (
     _CLAUDE_TO_OPENAI,
@@ -52,6 +53,7 @@ from ..agent.graph import (
     _TASK_OPENAI_OVERRIDE,
     build_graph,
 )
+from ..scorer.models import ScoringResult, ToolType
 from ..tracking import (
     evaluate_outputs,
     get_run_id,
@@ -123,7 +125,7 @@ _id_lock = Lock()
 _sim_status: dict[str, str] = {}  # sim_id -> "queued"|"running"|"done"|"failed"
 _sim_mlflow_ids: dict[str, str] = {}  # sim_id -> MLflow run UUID
 _sim_source_run: dict[str, str] = {}  # sim_id -> source run_id
-_sim_meta: dict[str, dict[str, Any]] = {}  # sim_id -> {mode, proficiency, seed}
+_sim_meta: dict[str, dict[str, Any]] = {}  # sim_id -> {proficiency, alea}
 _sim_counter = 0
 _sim_lock = Lock()
 
@@ -398,29 +400,27 @@ def _resolve_sim_run(sim_id: str) -> str:
 
 
 def _execute_simulation(
-    sim_id: str, source_run_id: str, mode: str, proficiency: float, seed: int | None
+    sim_id: str, source_run_id: str, proficiency: float, alea: float | None
 ) -> None:
     """Full simulation pipeline — runs synchronously in a background thread."""
     set_run_id(sim_id)
     try:
-        _execute_simulation_inner(sim_id, source_run_id, mode, proficiency, seed)
+        _execute_simulation_inner(sim_id, source_run_id, proficiency, alea)
     finally:
         set_run_id("-")
 
 
 def _execute_simulation_inner(
-    sim_id: str, source_run_id: str, mode: str, proficiency: float, seed: int | None
+    sim_id: str, source_run_id: str, proficiency: float, alea: float | None
 ) -> None:
-    from ..agent.candidate_graph import CandidateState, build_candidate_graph
+    from ..simulator import CandidateState, build_candidate_graph
 
     _sim_status[sim_id] = "running"
     LOGGER.info(
-        "simulation %s: source=%s mode=%s proficiency=%.2f seed=%s",
+        "simulation %s: source=%s proficiency=%.2f",
         sim_id,
         source_run_id,
-        mode,
         proficiency,
-        seed,
     )
 
     try:
@@ -431,11 +431,10 @@ def _execute_simulation_inner(
         source_mlflow_id = source_mlflow_run.info.run_id
         deliverable_format = source_mlflow_run.data.params.get("deliverable_format", "PBIP")
 
-        # Resolve proficiency for random mode
-        if mode == "random" and proficiency == 0.0:
-            rng = random.Random(seed)
-            proficiency = round(rng.uniform(0.3, 0.95), 2)
-            LOGGER.info("  random proficiency sampled: %.2f", proficiency)
+        # Sample proficiency when not provided by caller
+        if proficiency == 0.0:
+            proficiency = round(random.uniform(0.3, 0.95), 2)
+            LOGGER.info("  proficiency sampled: %.2f", proficiency)
 
         # Get or create the simulations experiment (thread-safe via MlflowClient)
         client = mlflow.MlflowClient()
@@ -446,7 +445,7 @@ def _execute_simulation_inner(
             else client.create_experiment(_SIM_EXPERIMENT)
         )
 
-        run_name = f"{sim_id}__{source_run_id}__{mode}"
+        run_name = f"{sim_id}__{source_run_id}"
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir)
@@ -467,13 +466,14 @@ def _execute_simulation_inner(
                         n = sum(1 for p in (output_dir / folder).rglob("*") if p.is_file())
                         LOGGER.info("  copied %s/ (%d files)", folder, n)
 
+            alea = alea if alea is not None else random.random()
+
             with mlflow.start_run(run_name=run_name, experiment_id=sim_exp_id) as active_run:
                 _sim_mlflow_ids[sim_id] = active_run.info.run_id
                 mlflow.log_params(
                     {
-                        "mode": mode,
                         "proficiency": proficiency,
-                        "seed": seed if seed is not None else "random",
+                        "alea": round(alea, 4),
                         "source_run_id": source_run_id,
                         "deliverable_format": deliverable_format,
                     }
@@ -485,13 +485,14 @@ def _execute_simulation_inner(
                         "source_mlflow_run_id": source_mlflow_id,
                     }
                 )
-
-                graph = build_candidate_graph(output_dir, mode, proficiency, deliverable_format)
+                graph = build_candidate_graph(
+                    output_dir, proficiency, deliverable_format, alea=alea
+                )
                 initial_state = CandidateState(
                     messages=[],
                     output_dir=str(output_dir),
-                    mode=mode,
                     proficiency=proficiency,
+                    alea=alea,
                     deliverable_format=deliverable_format,
                     retry_count=0,
                     validation_error=None,
@@ -518,7 +519,7 @@ def _execute_simulation_inner(
                 # Score the simulation against the recruiter solution
                 if not failed:
                     try:
-                        from ..agent.scorer import score_submission
+                        from ..scorer import score_submission
 
                         with tempfile.TemporaryDirectory() as score_tmp:
                             sol_local = mlflow.artifacts.download_artifacts(
@@ -528,16 +529,22 @@ def _execute_simulation_inner(
                             )
                             recruiter_solution = Path(sol_local).read_text(encoding="utf-8")
 
-                        scoring_md = score_submission(
+                        role = source_mlflow_run.data.params.get("role", "")
+                        scoring_result = score_submission(
                             output_dir=output_dir,
                             recruiter_solution=recruiter_solution,
                             deliverable_format=deliverable_format,
+                            role=role,
                         )
-                        if scoring_md:
+                        if scoring_result:
                             score_path = output_dir / "scoring.md"
-                            score_path.write_text(scoring_md, encoding="utf-8")
+                            score_path.write_text(scoring_result.to_markdown(), encoding="utf-8")
                             mlflow.log_artifact(str(score_path), artifact_path=None)
-                            LOGGER.info("  scoring complete (%d chars)", len(scoring_md))
+                            LOGGER.info(
+                                "  scoring complete: %d/%d",
+                                scoring_result.total_score,
+                                scoring_result.max_total_score,
+                            )
                     except Exception as exc:
                         LOGGER.warning("scoring step failed (non-fatal): %s", exc)
 
@@ -765,13 +772,44 @@ def download_recruiter(run_id: str) -> StreamingResponse:
 
 @app.get("/runs/{run_id}/candidate.zip")
 def download_candidate(run_id: str) -> StreamingResponse:
-    """Download candidate package: brief/ + starter/ (without generate_data.py)."""
+    """Download candidate package: brief/ + starter/ (without generate_data.py).
+
+    The starter is sanitized on the fly so that any project generated before the
+    Power BI Desktop 2.154 PBIR layout change is automatically migrated to the
+    correct structure before being zipped.
+    """
     mlflow_run_id = _resolve_mlflow_run(run_id)
-    buf = _build_zip_from_mlflow(
-        mlflow_run_id,
-        [("brief", "brief"), ("starter", "starter")],
-        exclude={"starter/generate_data.py"},
-    )
+    buf = io.BytesIO()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        local_path = mlflow.artifacts.download_artifacts(
+            run_id=mlflow_run_id,
+            artifact_path="outputs",
+            dst_path=tmpdir,
+        )
+        run_path = Path(local_path)
+        starter_path = run_path / "starter"
+        if starter_path.exists():
+            fixes = sanitize_pbip_starter(starter_path)
+            if fixes:
+                LOGGER.info(
+                    "candidate.zip: sanitizer applied %d fix(es) for run %s",
+                    len(fixes),
+                    run_id,
+                )
+        excluded = {"starter/generate_data.py"}
+        with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for subdir, prefix in [("brief", "brief"), ("starter", "starter")]:
+                src = run_path / subdir
+                if not src.is_dir():
+                    continue
+                for file_path in sorted(src.rglob("*")):
+                    if not file_path.is_file():
+                        continue
+                    arc_name = prefix + "/" + file_path.relative_to(src).as_posix()
+                    if arc_name in excluded:
+                        continue
+                    zf.write(file_path, arc_name)
+    buf.seek(0)
     return StreamingResponse(
         buf,
         media_type="application/zip",
@@ -779,14 +817,17 @@ def download_candidate(run_id: str) -> StreamingResponse:
     )
 
 
-@app.post("/runs/{run_id}/score", response_class=PlainTextResponse)
-async def score_run(run_id: str, solution: Annotated[UploadFile, File(...)]) -> str:
+@app.post("/runs/{run_id}/score")
+async def score_run(run_id: str, solution: Annotated[UploadFile, File(...)]) -> ScoringResult:
     """Score a candidate-submitted solution ZIP against the recruiter answer key.
 
     The ZIP must contain the completed project at its root (PBIP or IPYNB layout),
     matching the deliverable_format of the run.
+
+    Returns a structured JSON scoring result with per-dimension scores focused on
+    methodology, reasoning, and delivery maturity — not on value correctness.
     """
-    from ..agent.scorer import score_submission
+    from ..scorer import score_submission
 
     mlflow_run_id = _resolve_mlflow_run(run_id)
     mlflow_run = _find_mlflow_run(run_id)
@@ -794,14 +835,13 @@ async def score_run(run_id: str, solution: Annotated[UploadFile, File(...)]) -> 
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found.")
 
     deliverable_format = mlflow_run.data.params.get("deliverable_format", "PBIP")
+    role = mlflow_run.data.params.get("role", "")
 
     zip_bytes = await solution.read()
     if not zip_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    import zipfile as _zipfile
-
-    if not _zipfile.is_zipfile(io.BytesIO(zip_bytes)):
+    if not zipfile.is_zipfile(io.BytesIO(zip_bytes)):
         raise HTTPException(status_code=400, detail="Uploaded file is not a valid ZIP.")
 
     try:
@@ -810,7 +850,7 @@ async def score_run(run_id: str, solution: Annotated[UploadFile, File(...)]) -> 
             starter_dir = output_dir / "starter"
             starter_dir.mkdir()
 
-            with _zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
                 zf.extractall(starter_dir)
 
             # If the ZIP wrapped everything in a single top-level folder, strip it
@@ -841,10 +881,11 @@ async def score_run(run_id: str, solution: Annotated[UploadFile, File(...)]) -> 
                 )
                 recruiter_solution = Path(local_sol).read_text(encoding="utf-8")
 
-            scoring_md = score_submission(
+            scoring_result = score_submission(
                 output_dir=output_dir,
                 recruiter_solution=recruiter_solution,
                 deliverable_format=deliverable_format,
+                role=role,
             )
 
     except HTTPException:
@@ -853,10 +894,10 @@ async def score_run(run_id: str, solution: Annotated[UploadFile, File(...)]) -> 
         LOGGER.error("score_run %s failed: %s", run_id, exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Scoring failed: {exc}") from exc
 
-    if scoring_md is None:
+    if scoring_result is None:
         raise HTTPException(status_code=422, detail="Scorer returned no result. Check server logs.")
 
-    return scoring_md
+    return scoring_result
 
 
 # ── simulation endpoints ───────────────────────────────────────────
@@ -871,32 +912,24 @@ def create_simulation(
     Spawns a background agent that reads the source run's brief and starter project,
     then fills in the solution according to the requested proficiency level.
 
-    - **mode=perfect**: agent behaves as an expert; all tasks completed flawlessly.
-    - **mode=random**: agent simulates a candidate whose skill matches *proficiency* (0.0–1.0).
-      When *proficiency* is omitted it is sampled uniformly in [0.3, 0.95] (use *seed* to fix it).
+    - **proficiency=1.0**: perfect expert submission; all tasks completed flawlessly.
+    - **proficiency=0.0–0.99**: simulates a candidate at the corresponding skill tier.
+    - **proficiency omitted**: sampled uniformly in [0.3, 0.95].
     """
     # Validate source run exists before queuing
     if _find_mlflow_run(request.run_id) is None and request.run_id not in _run_status:
         raise HTTPException(status_code=404, detail=f"Source run '{request.run_id}' not found.")
 
-    mode = request.mode
-    if mode not in ("perfect", "random"):
-        raise HTTPException(status_code=422, detail="mode must be 'perfect' or 'random'")
-
-    # For perfect mode, proficiency is always 1.0
-    if mode == "perfect":
-        proficiency = 1.0
-    else:
-        # 0.0 is sentinel meaning "sample randomly inside the background task"
-        proficiency = request.proficiency if request.proficiency is not None else 0.0
+    # 0.0 is the sentinel meaning "sample randomly inside the background task"
+    proficiency = request.proficiency if request.proficiency is not None else 0.0
 
     sim_id = _next_sim_id()
     _sim_status[sim_id] = "queued"
     _sim_source_run[sim_id] = request.run_id
-    _sim_meta[sim_id] = {"mode": mode, "proficiency": proficiency, "seed": request.seed}
+    _sim_meta[sim_id] = {"proficiency": proficiency}
 
     background_tasks.add_task(
-        _execute_simulation, sim_id, request.run_id, mode, proficiency, request.seed
+        _execute_simulation, sim_id, request.run_id, proficiency, request.alea
     )
     return SimulationResponse(simulation_id=sim_id, status="queued")
 
@@ -912,11 +945,10 @@ def get_simulation(sim_id: str) -> SimulationDetails:
     if mlflow_run is not None:
         p = mlflow_run.data.params
         meta = {
-            "mode": p.get("mode", meta.get("mode", "unknown")),
-            "proficiency": float(p["proficiency"])
-            if "proficiency" in p
-            else meta.get("proficiency"),
-            "seed": int(p["seed"]) if p.get("seed", "random") != "random" else None,
+            "proficiency": (
+                float(p["proficiency"]) if "proficiency" in p else meta.get("proficiency")
+            ),
+            "alea": float(p["alea"]) if "alea" in p else meta.get("alea"),
         }
 
     return SimulationDetails(
@@ -924,25 +956,39 @@ def get_simulation(sim_id: str) -> SimulationDetails:
         source_run_id=_sim_source_run.get(sim_id)
         or (mlflow_run.data.tags.get("source_run_id") if mlflow_run else "unknown"),
         status=_effective_sim_status(sim_id, mlflow_run.info.status if mlflow_run else None),
-        mode=meta.get("mode", "unknown"),
         proficiency=meta.get("proficiency"),
-        seed=meta.get("seed"),
+        alea=meta.get("alea"),
         mlflow_run_id=mlflow_run.info.run_id if mlflow_run else None,
     )
 
 
-@app.get("/simulations/{sim_id}/scoring", response_class=PlainTextResponse)
-def get_simulation_scoring(sim_id: str) -> str:
-    """Return the scoring markdown for a completed simulation."""
+@app.get("/simulations/{sim_id}/scoring")
+def get_simulation_scoring(sim_id: str) -> ScoringResult:
+    """Return the structured scoring result for a completed simulation."""
     mlflow_run_id = _resolve_sim_run(sim_id)
     try:
+        sim_run = mlflow.get_run(mlflow_run_id)
+        deliverable_format = sim_run.data.params.get("deliverable_format", "PBIP")
+        # Derive tool_type the same way the scorer does.
+        src_run_id = sim_run.data.tags.get("source_mlflow_run_id", "")
+        role = ""
+        if src_run_id:
+            with suppress(Exception):
+                role = mlflow.get_run(src_run_id).data.params.get("role", "")
+        if deliverable_format == "IPYNB":
+            tool_type = "python_ds" if "scientist" in role.lower() else "python_da"
+        else:
+            tool_type = "powerbi"
+
         with tempfile.TemporaryDirectory() as tmpdir:
             local = mlflow.artifacts.download_artifacts(
                 run_id=mlflow_run_id,
                 artifact_path="scoring.md",
                 dst_path=tmpdir,
             )
-            return Path(local).read_text(encoding="utf-8")
+            return ScoringResult.from_markdown(
+                Path(local).read_text(encoding="utf-8"), tool_type=cast(ToolType, tool_type)
+            )
     except Exception as exc:
         raise HTTPException(status_code=404, detail=f"Scoring not found: {exc}") from exc
 
@@ -964,6 +1010,13 @@ def download_simulation_solution(sim_id: str) -> StreamingResponse:
                 dst_path=tmpdir,
             )
             solution_path = Path(local_path)
+            fixes = sanitize_pbip_starter(solution_path)
+            if fixes:
+                LOGGER.info(
+                    "solution.zip: sanitizer applied %d fix(es) for sim %s",
+                    len(fixes),
+                    sim_id,
+                )
             with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
                 for file_path in sorted(solution_path.rglob("*")):
                     if not file_path.is_file():

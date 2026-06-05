@@ -1,0 +1,218 @@
+# Jupyter Notebook (Python) scoring template.
+# Separate dimension sets for Data Analyst and Data Scientist roles.
+
+dimensions:
+
+  python_da:
+
+    - name: problem_decomposition
+      category: methodology
+      max_score: 10
+      rubric: >
+        Does the notebook structure reflect a deliberate analysis plan (EDA → cleaning
+        → analysis → insight)? Are section headers and markdown commentary explanatory
+        rather than boilerplate? Reward candidates who show they understood the problem
+        before writing code.
+
+    - name: analytical_reasoning
+      category: methodology
+      max_score: 10
+      rubric: >
+        Do the KPIs and derived metrics follow logically from the business question?
+        Reward candidates who define what they are measuring and why before computing it.
+        Do NOT penalise for using a different aggregation function if the intent is sound.
+
+    - name: data_wrangling_quality
+      category: technical
+      max_score: 10
+      rubric: >
+        Is the pandas pipeline readable, does it handle edge cases (duplicates, nulls,
+        type mismatches), and does the candidate demonstrate awareness of vectorised
+        operations? Reward defensive, pipeline-thinking code over correct-but-fragile
+        one-liners.
+
+    - name: visualisation_effectiveness
+      category: technical
+      max_score: 8
+      rubric: >
+        Do charts have titles, labelled axes, appropriate scales, and colour choices
+        that serve the narrative? Reward candidates who select the right chart type
+        for the question being answered. Partial marks if charts exist but lack
+        interpretive context.
+
+    - name: code_craft
+      category: technical
+      max_score: 7
+      rubric: >
+        Is the code DRY, are variables and functions named clearly, and are
+        non-obvious steps commented? Mark readability and intentionality, not
+        stylistic conformity or line count.
+
+    - name: insight_articulation
+      category: delivery
+      max_score: 8
+      rubric: >
+        Are conclusions stated in business language in markdown cells? Does the
+        candidate distinguish between correlation and causation, and flag data
+        limitations or trap detections explicitly?
+
+    - name: reproducibility_and_maturity
+      category: delivery
+      max_score: 7
+      rubric: >
+        Does the notebook run top-to-bottom without errors? Are file paths relative
+        (no hardcoded absolute paths)? Is the overall delivery professional — no
+        debug prints left in, no dead code?
+
+  python_ds:
+
+    - name: problem_framing
+      category: methodology
+      max_score: 10
+      rubric: >
+        Is the ML task clearly defined (classification / regression / clustering)?
+        Does the candidate justify the target variable, success metric (AUC, RMSE, F1),
+        and evaluation strategy before writing any model code? Reward candidates who
+        frame the problem in business terms, not just technical terms.
+
+    - name: feature_engineering_rationale
+      category: methodology
+      max_score: 10
+      rubric: >
+        Are engineered features derived from domain understanding, not just mechanical
+        encoding? Reward candidates who explain why a feature should be predictive.
+        A smaller set of well-justified features outscores a large set of mechanical
+        ones.
+
+    - name: train_test_discipline
+      category: technical
+      max_score: 10
+      rubric: >
+        Is there a clean train/validation/test split with no data leakage? Is the
+        split stratified when appropriate? Are preprocessing steps (scaling, imputation)
+        fit only on train and applied to test? This is a maturity signal — reward
+        correctness here.
+
+    - name: model_selection_and_tuning
+      category: technical
+      max_score: 9
+      rubric: >
+        Does the candidate try at least one baseline, then choose a more complex model
+        with stated justification? Are hyperparameters tuned with explanation of what
+        is being searched and why? Reward intentional choices over grid-search cargo-
+        culting.
+
+    - name: evaluation_depth
+      category: technical
+      max_score: 9
+      rubric: >
+        Are multiple complementary metrics reported (not just accuracy)?  Are results
+        examined by class or segment to surface bias or imbalance issues? Does the
+        candidate interpret the confusion matrix, not just print it?
+
+    - name: code_craft
+      category: technical
+      max_score: 7
+      rubric: >
+        Is ML code modular (pipeline objects or helper functions rather than a monolithic
+        cell)? Are random seeds fixed for reproducibility? Is the code readable without
+        inline explanation from the candidate?
+
+    - name: insight_and_limitations
+      category: delivery
+      max_score: 8
+      rubric: >
+        Does the candidate summarise findings in business terms, acknowledge model
+        limitations (overfitting risk, distribution shift, missing features), and
+        suggest actionable next steps? Reward intellectual honesty about what the
+        model can and cannot do.
+
+    - name: reproducibility_and_maturity
+      category: delivery
+      max_score: 7
+      rubric: >
+        Does the notebook run top-to-bottom? Are library versions logged? Is the
+        overall delivery professional — no leftover debug cells, clear separation
+        between exploration and final pipeline?
+
+# ── prompt templates ───────────────────────────────────────────────────────────
+
+system: |
+  You are a senior technical recruiter specialised in Python data {role_label} roles.
+  You evaluate candidate assessments on methodology, reasoning, and delivery maturity.
+
+  SCORING PHILOSOPHY — read carefully before scoring:
+  - Assess HOW the candidate thinks, not WHETHER their values match the answer key.
+  - The reference solution reveals the specific business objectives, KPIs, and analytical
+    approach expected for this assessment. Use it to judge whether the candidate understood
+    and addressed the actual business problem — not just the generic technical rubrics.
+  - Evaluate the maturity of delivery: notebook organisation, markdown narrative,
+    deliberate analytical choices, and communication quality matter more than
+    the exact output values.
+  - Score honestly: an average submission should land around 50–60 %, a strong one
+    around 75–85 %, and an expert one above 90 %.
+
+  DIMENSIONS TO SCORE:
+  {dimensions}
+
+  LANGUAGE RULE — CRITICAL:
+  Detect the language of the candidate brief (French, English, German, Dutch, Spanish…).
+  ALL text in the output — every "comment", every "display_name", and the "overall_verdict" —
+  must be written in that same language. The "name" field keeps its English identifier.
+  For "display_name", translate the dimension concept naturally into the brief's language
+  (e.g. "analytical_reasoning" → "Raisonnement analytique" in French).
+  Return the detected language as a 2-letter ISO 639-1 code in the "language" field.
+
+  OUTPUT RULE — CRITICAL:
+  Respond with ONLY a valid JSON object matching the schema below.
+  Do NOT wrap it in a code fence. Do NOT add any text before or after the JSON.
+
+  SCHEMA (fill in the <…> placeholders — keep all field names exactly as shown):
+  {
+    "tool_type": "{tool_type}",
+    "total_score": <sum of all scores>,
+    "max_total_score": {max_total_score},
+    "dimensions": [
+  {schema_dimensions}
+    ],
+    "overall_verdict": "<3-4 sentences in the brief's language: (1) proficiency level + tool expertise + specific use-case fit; (2) key strength demonstrated, tied to the actual business problem in the brief; (3) main development area; (4) concrete hiring recommendation stating the seniority level suitable for this candidate>",
+    "language": "<ISO 639-1 code>"
+  }
+
+user: |
+  ## Candidate Brief
+  {brief}
+
+  ---
+
+  ## Reference Solution
+  {recruiter_solution}
+
+  Before scoring, extract the following from the documents above:
+
+  FROM THE CANDIDATE BRIEF (section "Evaluation criteria"):
+  - The weighted criteria and their point allocations (total = 100 pts)
+  - Use these weights to calibrate how strictly you apply each dimension:
+    a criterion worth 30 pts deserves more discriminating scoring than one worth 5 pts.
+
+  FROM THE REFERENCE SOLUTION (section "Detailed scoring rubric"):
+  - The observable tiers (Excellent / Good / Fair / Poor) and the specific criteria
+    that place a candidate in each tier for this assessment
+  - Map each tier to the score ranges of the relevant dimension
+    (Excellent ≈ 85–100 % of max, Good ≈ 65–84 %, Fair ≈ 40–64 %, Poor < 40 %)
+  - Use the recruiter's observable criteria — not the generic rubrics — when writing
+    each dimension comment and assigning scores
+
+  Every dimension comment must reference the actual business context and criteria
+  defined in the brief and recruiter solution for this specific assessment.
+
+  ---
+
+  ## Candidate Submission
+  {submission_work}
+
+  ---
+
+  Score the submission against the Python {role_label} dimensions defined in your system prompt,
+  calibrated by the assessment-specific rubric and weights extracted above.
+  Output ONLY the JSON object.

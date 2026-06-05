@@ -1,0 +1,286 @@
+# Power BI (PBIP) format guidance for candidate simulation.
+# Injected as {format_guidance} in the simulation system prompt.
+
+format_guidance: |
+  POWER BI (PBIP) GUIDANCE — Power BI Desktop 2.154 / TMDL v4
+
+  CARDINAL RULE: COMPLETION exercise, not a rewrite.
+  READ every existing .tmdl file first, then APPEND your additions.
+  NEVER overwrite an existing file from scratch — you will lose the M partition
+  query and Power BI will refuse to open the model.
+
+  WORKFLOW:
+  1. list_files starter/Assessment.SemanticModel/definition/
+  2. read_file every table .tmdl and model.tmdl
+  3. Per table .tmdl: append measure blocks AFTER the last column block,
+     BEFORE the partition block — write the full file back with original content intact.
+  4. model.tmdl: append relationship blocks inside the model block if missing.
+  5. Build report pages: write pages.json, page.json, and visual.json files.
+
+  ── TMDL RULES ──────────────────────────────────────────────────────
+
+  - NEVER write "createOrReplace" anywhere
+  - database.tmdl must be exactly:
+        database Database
+        	compatibilityLevel: 1601
+  - model.tmdl: model-level properties, relationships, and annotations only.
+    Do NOT add "ref table" or "ref expression" lines — tables are auto-discovered.
+  - Only use sourceColumn values that exist in data_schema.json.
+    Never invent Month, Mois, Quarter, Year columns — date granularity is DAX.
+  - DataPath parameter: never replace with a hardcoded path when writing back .tmdl files.
+
+  RELATIONSHIPS (inside model Model block, 1 tab indent):
+  	relationship RelName
+  		fromColumn: FactTable.fk_column
+  		toColumn: DimTable.pk_column
+
+  NO AMBIGUOUS PATHS: each table pair must have at most one path (direct or transitive).
+
+  DAX MEASURES — declarative format only (no curly braces ever):
+
+    Single-line:
+  	measure 'Nb polices' = COUNTROWS(polices)
+  		formatString: #,0
+  		displayFolder: KPIs
+
+    Multi-line:
+  	measure 'Taux sinistralité' =
+  			DIVIDE([Coût sinistres], [Prime annuelle totale])
+  		formatString: 0.00%
+  		displayFolder: KPIs
+
+  TAB RULES (memorise — silent rejections otherwise):
+    measure keyword      → 1 tab  (inside table block)
+    DAX continuation     → 3 tabs
+    formatString / displayFolder → 2 tabs
+
+  Column references: Table[column_name]
+  Table name = TMDL file name without .tmdl extension (e.g. "polices", "agents").
+  Column name = exact sourceColumn value read from that TMDL file. Never invent names.
+
+  ── REPORT PAGES — PBIR 1.0.0 (Power BI Desktop 2.154) ─────────────
+
+  A report can have ONE OR MORE pages. Each page is its own folder.
+  Distribute visuals across pages as you see fit (e.g. KPIs on page 1,
+  detail charts on page 2, open question textbox on a dedicated page).
+
+  File paths:
+    starter/Assessment.Report/definition/pages/pages.json        ← lists ALL pages
+    starter/Assessment.Report/definition/pages/<PageHexId>/page.json
+    starter/Assessment.Report/definition/pages/<PageHexId>/visuals/<VisualId>/visual.json
+
+  pages.json — add every page ID in order; first entry is the landing page:
+    {
+      "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/pagesMetadata/1.1.0/schema.json",
+      "pageOrder": ["<page1_id>", "<page2_id>"],
+      "activePageName": "<page1_id>"
+    }
+
+  page.json template (one per page folder):
+    {
+      "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.1.0/schema.json",
+      "name": "<PageHexId>",
+      "displayName": "Page Title",
+      "displayOption": "FitToPage",
+      "height": 720,
+      "width": 1280
+    }
+
+  Use a random 20-character lowercase hex string as the page ID (e.g. "a1b2c3d4e5f607182930").
+  Every page listed in pages.json MUST have its folder, page.json, and at least one visual.
+
+  ── visual.json — STRICT SCHEMA (additionalProperties: false) ───────
+
+  The ONLY valid root-level fields are:
+    $schema  name  position  visual  visualGroup
+    parentGroupName  filterConfig  isHidden  annotations  howCreated
+
+  FORBIDDEN at root: "config", "filters", "tabOrder", "displayState", "layouts".
+  tabOrder belongs INSIDE position. displayState does not exist in this schema.
+
+  ── Minimal valid visual (no data binding) ──────────────────────────
+
+  {
+    "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/1.0.0/schema.json",
+    "name": "card_kpi",
+    "position": {"x": 20, "y": 20, "z": 1, "height": 80, "width": 200, "tabOrder": 0},
+    "visual": {"visualType": "card"}
+  }
+
+  ── Binding measures and columns via visual.query.queryState ─────────
+
+  Each projection REQUIRES two properties:
+    "queryRef": "TABLE.Property Name"   ← MANDATORY alias, always "Entity.Property"
+    "field":    { Measure or Column definition }
+
+  Measure projection:
+    {
+      "queryRef": "TABLE.Measure Name",
+      "field": {"Measure": {"Expression": {"SourceRef": {"Entity": "TABLE"}}, "Property": "Measure Name"}}
+    }
+
+  Column projection:
+    {
+      "queryRef": "TABLE.column_name",
+      "field": {"Column": {"Expression": {"SourceRef": {"Entity": "TABLE"}}, "Property": "column_name"}}
+    }
+
+  TABLE = TMDL table name without .tmdl (e.g. "polices", "agents").
+  queryRef must exactly equal "Entity.Property" from the corresponding field.
+
+  Visual roles (queryState keys) by visual type:
+    card / multiRowCard / tableEx          → "Values"
+    slicer                                 → "Field"
+    lineChart                              → "Category" + "Y"  (+ "Series" optional)
+    clusteredBarChart / clusteredColumnChart / stackedColumnChart
+                                           → "Category" + "Y"
+    kpiVisual                              → "Value"  (+ "TrendLine", "TargetGoal" optional)
+
+  ── EXAMPLE 1 — card showing a measure ──────────────────────────────
+
+  {
+    "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/1.0.0/schema.json",
+    "name": "card_nb_polices",
+    "position": {"x": 20, "y": 20, "z": 1, "height": 80, "width": 200, "tabOrder": 0},
+    "visual": {
+      "visualType": "card",
+      "query": {
+        "queryState": {
+          "Values": {
+            "projections": [
+              {
+                "queryRef": "polices.Nb polices actives habitation",
+                "field": {"Measure": {"Expression": {"SourceRef": {"Entity": "polices"}}, "Property": "Nb polices actives habitation"}}
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+
+  ── EXAMPLE 2 — clusteredBarChart (column axis + measure value) ──────
+
+  {
+    "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/1.0.0/schema.json",
+    "name": "bar_agent",
+    "position": {"x": 240, "y": 20, "z": 2, "height": 260, "width": 360, "tabOrder": 1},
+    "visual": {
+      "visualType": "clusteredBarChart",
+      "query": {
+        "queryState": {
+          "Category": {
+            "projections": [
+              {
+                "queryRef": "agents.nom_agent",
+                "field": {"Column": {"Expression": {"SourceRef": {"Entity": "agents"}}, "Property": "nom_agent"}}
+              }
+            ]
+          },
+          "Y": {
+            "projections": [
+              {
+                "queryRef": "polices.Nb polices actives habitation",
+                "field": {"Measure": {"Expression": {"SourceRef": {"Entity": "polices"}}, "Property": "Nb polices actives habitation"}}
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+
+  ── EXAMPLE 3 — slicer on a column ──────────────────────────────────
+
+  {
+    "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/1.0.0/schema.json",
+    "name": "slicer_region",
+    "position": {"x": 620, "y": 20, "z": 3, "height": 80, "width": 180, "tabOrder": 2},
+    "visual": {
+      "visualType": "slicer",
+      "query": {
+        "queryState": {
+          "Field": {
+            "projections": [
+              {
+                "queryRef": "agents.region",
+                "field": {"Column": {"Expression": {"SourceRef": {"Entity": "agents"}}, "Property": "region"}}
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+
+  ── EXAMPLE 4 — tableEx with multiple fields ─────────────────────────
+
+  {
+    "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/1.0.0/schema.json",
+    "name": "table_detail",
+    "position": {"x": 20, "y": 320, "z": 4, "height": 280, "width": 800, "tabOrder": 3},
+    "visual": {
+      "visualType": "tableEx",
+      "query": {
+        "queryState": {
+          "Values": {
+            "projections": [
+              {
+                "queryRef": "agents.nom_agent",
+                "field": {"Column": {"Expression": {"SourceRef": {"Entity": "agents"}}, "Property": "nom_agent"}}
+              },
+              {
+                "queryRef": "agents.region",
+                "field": {"Column": {"Expression": {"SourceRef": {"Entity": "agents"}}, "Property": "region"}}
+              },
+              {
+                "queryRef": "polices.Nb polices actives habitation",
+                "field": {"Measure": {"Expression": {"SourceRef": {"Entity": "polices"}}, "Property": "Nb polices actives habitation"}}
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+
+  ── OPEN QUESTION — textbox visual on the report page ───────────────
+
+  The brief always contains at least one open analytical/business question.
+  YOU MUST ANSWER IT INSIDE THE REPORT as a textbox visual.
+  Do NOT write a separate text file — the answer must live on the canvas.
+
+  Add a textbox visual to the page. Put the question in bold on the first paragraph,
+  then your answer on the following paragraph(s).
+
+  Textbox visual format (no queryRef or query needed):
+
+  {
+    "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/1.0.0/schema.json",
+    "name": "text_open_question",
+    "position": {"x": 20, "y": 620, "z": 20, "height": 180, "width": 820, "tabOrder": 20},
+    "visual": {
+      "visualType": "textbox",
+      "objects": {
+        "general": [
+          {
+            "properties": {
+              "paragraphs": [
+                {
+                  "textRuns": [{"value": "Question : <copy the open question from the brief here>"}],
+                  "name": "para0"
+                },
+                {
+                  "textRuns": [{"value": "<your answer — depth proportional to proficiency and today's energy>"}],
+                  "name": "para1"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+
+  The depth and quality of your answer must match your proficiency tier and
+  today's energy level.

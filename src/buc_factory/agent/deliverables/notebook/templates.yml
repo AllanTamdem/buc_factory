@@ -1,0 +1,109 @@
+# Jupyter Notebook / Python generate_starter prompt templates.
+# Loaded by prompting._load_deliverable_templates("notebook").
+
+python_da: |
+  Sub-task 6/8: Generate the Python Data Analyst starter project.
+
+  DATA SCHEMA
+  {data_schema_json}
+
+  Write under "starter/":
+
+  requirements.txt — one package per line, no version pins:
+    pandas, numpy, matplotlib, seaborn, jupyter, notebook
+
+  notebook.ipynb — valid Jupyter 4 notebook (nbformat=4, nbformat_minor=5).
+  Cell format: code cells → cell_type "code", execution_count null, metadata {{}},
+  outputs [], source [list-of-strings]. Markdown cells → cell_type "markdown",
+  metadata {{}}, source [list-of-strings].
+
+  Cells in order:
+    1. [md]   Title + "Launch from the starter/ folder."
+    2. [code] Imports: pandas as pd, numpy as np, matplotlib.pyplot as plt,
+              seaborn as sns, warnings; %matplotlib inline;
+              warnings.filterwarnings('ignore'); pd.set_option('display.max_columns', None);
+              sns.set_theme(style='whitegrid')
+    3. [code] Load each entity: <snake_case_name> = pd.read_csv("data/<file.csv>")
+    4. [code] Preview loop: for each df print shape, display(head(3)), dtypes
+    5. [md]   "## 1. Data Quality Check — nulls, duplicates, suspicious values"
+    6. [code] Null counts + duplicate check per dataframe
+    7. [md]   "## 2. Data Preparation — joins, type fixes, trap handling"
+    8. [code] # your preparation code here
+    9. [md]   "## 3. Analysis & KPIs"
+   10. [code] # your analysis code here
+   11. [md]   "## 4. Visualizations"
+   12. [code] # your charts here
+   13. [md]   "## 5. Open Question"
+   14. [md]   "## 6. Conclusion"
+
+  README.md — cross-platform setup and launch instructions covering:
+    • Linux / macOS: python -m venv .venv && source .venv/bin/activate &&
+      pip install -r requirements.txt && python -m notebook notebook.ipynb
+    • Windows (cmd): python -m venv .venv && .venv\Scripts\activate &&
+      pip install -r requirements.txt && python -m notebook notebook.ipynb
+    • Windows (PowerShell): python -m venv .venv && .venv\Scripts\Activate.ps1 &&
+      pip install -r requirements.txt && python -m notebook notebook.ipynb
+  Note: "python -m notebook" works even if jupyter is not on PATH.
+
+  Validate notebook.ipynb with validate_json. Then call mark_subtask_complete.
+
+python_ds: |
+  Sub-task 6/8: Generate the Python Data Scientist starter project.
+
+  DATA SCHEMA
+  {data_schema_json}
+
+  Write under "starter/":
+
+  requirements.txt — one package per line, no version pins:
+    pandas, numpy, matplotlib, seaborn, scikit-learn, xgboost, tensorflow, jupyter, notebook
+
+  notebook.ipynb — valid Jupyter 4 notebook. Same cell format rules as above.
+
+  Cells in order:
+    1. [md]   Title + "Launch from the starter/ folder."
+    2. [code] Full ML imports: pandas, numpy, matplotlib, seaborn; from sklearn:
+              train_test_split, Pipeline, StandardScaler, LabelEncoder,
+              classification_report, confusion_matrix, roc_auc_score,
+              mean_squared_error, r2_score; import xgboost as xgb;
+              import tensorflow as tf, from tensorflow import keras, layers;
+              warnings; %matplotlib inline; sns.set_theme(style='whitegrid');
+              print(f"TF {{tf.__version__}}  |  XGB {{xgb.__version__}}")
+    3. [code] Load each entity: <snake_case_name> = pd.read_csv("data/<file.csv>")
+    4. [code] Preview loop: for each df print shape, display(head(3)), dtypes
+    5. [md]   "## 1. Data Quality Check — nulls, class imbalance, type issues, traps"
+    6. [code] Null counts, duplicate check, value_counts for categoricals
+    7. [md]   "## 2. Feature Engineering"
+    8. [code] # your feature engineering code here
+    9. [md]   "## 3. Modelling"
+   10. [code] Scaffold: define TARGET/FEATURES; train_test_split(test_size=0.2,
+              random_state=42, stratify=y); XGBClassifier stub (n_estimators=200,
+              random_state=42); commented Keras stub (Input → Dense → Dropout → sigmoid)
+   11. [md]   "## 4. Evaluation"
+   12. [code] # your evaluation code here
+   13. [md]   "## 5. Visualizations"
+   14. [code] # your charts here
+   15. [md]   "## 6. Open Question"
+   16. [md]   "## 7. Conclusion"
+
+  README.md — cross-platform setup and launch instructions covering:
+    • Linux / macOS: python -m venv .venv && source .venv/bin/activate &&
+      pip install -r requirements.txt && python -m notebook notebook.ipynb
+    • Windows (cmd): python -m venv .venv && .venv\Scripts\activate &&
+      pip install -r requirements.txt && python -m notebook notebook.ipynb
+    • Windows (PowerShell): python -m venv .venv && .venv\Scripts\Activate.ps1 &&
+      pip install -r requirements.txt && python -m notebook notebook.ipynb
+  Note: "python -m notebook" works even if jupyter is not on PATH.
+
+  Validate notebook.ipynb with validate_json. Then call mark_subtask_complete.
+
+generic: |
+  Sub-task 6/8: Generate the starter for {tool}.
+
+  Build a minimal openable project under "starter/" appropriate for
+  {tool} ({deliverable_format}). Include source-data wiring to
+  ../data/*.csv, schema/type declarations for each entity, and an empty
+  report/dashboard surface.
+
+  Document the structure in starter/README.md.
+  Then call mark_subtask_complete.

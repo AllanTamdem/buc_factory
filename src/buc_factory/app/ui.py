@@ -12,6 +12,8 @@ from typing import Any
 import requests
 import streamlit as st
 
+from buc_factory.scorer.models import ScoringResult
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 _HERE = Path(__file__).parent
@@ -973,7 +975,12 @@ def page_run_detail() -> None:
 
         result_key = f"score_result_{run_id}"
         if result_key in st.session_state:
-            st.markdown(st.session_state[result_key])
+            try:
+                st.markdown(
+                    ScoringResult.model_validate_json(st.session_state[result_key]).to_markdown()
+                )
+            except Exception as _exc:
+                st.warning(f"Could not render scoring result: {_exc}")
 
     elif status in ("queued", "running"):
         st.info("Run is in progress. Packages will be available once complete.")
@@ -1069,43 +1076,34 @@ def page_simulate() -> None:
     st.markdown(
         "Run an AI-powered candidate simulation against a completed assessment. "
         "The agent reads the brief and starter project, then fills in a solution "
-        "according to the selected proficiency level."
+        "at the chosen proficiency level. A random **alea** factor (daily energy) "
+        "is drawn automatically to vary focus and answer depth within the tier."
     )
 
     # ── Launch form ───────────────────────────────────────────────────────────
     st.markdown("#### Launch simulation")
 
-    fc1, fc2 = st.columns([2, 2])
+    fc1, fc2, fc3 = st.columns([2, 2, 2])
     run_id_input = fc1.text_input(
         "Source run ID *",
         placeholder="run_001",
         help="The completed assessment run to simulate against.",
     )
-    mode = fc2.selectbox(
-        "Mode *",
-        ["perfect", "random"],
-        help="'perfect' → expert. 'random' → simulates a candidate at the chosen proficiency.",
-    )
-
-    is_random = mode == "random"
-    sc1, sc2 = st.columns([2, 2])
-    proficiency = sc1.slider(
-        "Proficiency (random mode only)",
+    proficiency_raw = fc2.slider(
+        "Proficiency",
         min_value=0.0,
         max_value=1.0,
         value=0.65,
         step=0.05,
-        disabled=not is_random,
-        help="0 = very junior, 1 = expert. Ignored when mode is 'perfect'.",
+        help="0 = very junior · 1 = perfect expert. Leave at 0 to sample randomly in [0.30, 0.95].",
     )
-    seed = sc2.number_input(
-        "Seed (optional)",
-        min_value=0,
-        max_value=99999,
-        value=0,
-        step=1,
-        disabled=not is_random,
-        help="Fix the RNG seed for reproducible random proficiency sampling. 0 = no seed.",
+    alea_raw = fc3.slider(
+        "Alea (daily energy)",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.0,
+        step=0.05,
+        help="Shape of the day. Low = distracted · High = motivated. 0 = draw randomly.",
     )
 
     submitted = st.button("Launch simulation →", type="primary", use_container_width=False)
@@ -1114,11 +1112,11 @@ def page_simulate() -> None:
         if not run_id_input.strip():
             st.error("Source run ID is required.")
         else:
-            payload: dict[str, Any] = {"run_id": run_id_input.strip(), "mode": mode}
-            if is_random:
-                payload["proficiency"] = proficiency
-                if int(seed) > 0:
-                    payload["seed"] = int(seed)
+            payload: dict[str, Any] = {"run_id": run_id_input.strip()}
+            if proficiency_raw > 0.0:
+                payload["proficiency"] = proficiency_raw
+            if alea_raw > 0.0:
+                payload["alea"] = alea_raw
 
             with st.spinner("Queuing simulation…"):
                 result, err = _api_post("/simulations", payload)
@@ -1160,10 +1158,14 @@ def page_simulate() -> None:
             status = data["status"]
             hc1, hc2, hc3, hc4 = st.columns(4)
             hc1.markdown(_badge(status), unsafe_allow_html=True)
-            hc2.markdown(_param("MODE", data.get("mode", "—")), unsafe_allow_html=True)
             prof = data.get("proficiency")
-            hc3.markdown(
+            hc2.markdown(
                 _param("PROFICIENCY", f"{prof:.0%}" if prof is not None else "—"),
+                unsafe_allow_html=True,
+            )
+            alea = data.get("alea")
+            hc3.markdown(
+                _param("ALEA", f"{alea:.2f}" if alea is not None else "—"),
                 unsafe_allow_html=True,
             )
             hc4.markdown(
@@ -1185,7 +1187,12 @@ def page_simulate() -> None:
                     if scoring_err:
                         st.warning(f"Scoring not available: {scoring_err}")
                     elif scoring_text:
-                        st.markdown(scoring_text)
+                        try:
+                            st.markdown(
+                                ScoringResult.model_validate_json(scoring_text).to_markdown()
+                            )
+                        except Exception as _exc:
+                            st.warning(f"Could not render scoring result: {_exc}")
 
                 with tab_dl:
                     st.markdown("Download the completed starter project:")
